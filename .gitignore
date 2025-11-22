@@ -1,0 +1,5 @@
+yolov8_pose.rknn
+yolov8n-pose.data
+yolov8n-pose.model
+yolov8n-pose.onnx
+yolov8n-pose.quantization.cfg
