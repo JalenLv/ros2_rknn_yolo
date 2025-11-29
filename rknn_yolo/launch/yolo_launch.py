@@ -12,7 +12,7 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             "bbox_kpoints_topic",
-            default_value="/bounding_boxes_keypoints",
+            default_value="bounding_boxes_keypoints",
             description="Topic to publish bounding boxes with keypoints"
         ),
         DeclareLaunchArgument(
