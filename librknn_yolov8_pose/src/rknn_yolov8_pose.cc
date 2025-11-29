@@ -28,12 +28,12 @@ rknn_yolo::YoloV8Pose::~YoloV8Pose() {
 }
 
 int rknn_yolo::YoloV8Pose::infer(
-    const sensor_msgs::msg::Image::ConstPtr img,
+    const sensor_msgs::msg::Image::ConstSharedPtr img,
     const bboxes_kpoints_msgs::msg::BoundingBoxesKeypoints::SharedPtr bboxes
 ) {
     cv_bridge::CvImagePtr cv_ptr;
     try {
-        cv_ptr = cv_bridge::toCvCopy(img, sensor_msgs::image_encodings::BGR8);
+        cv_ptr = cv_bridge::toCvCopy(img, sensor_msgs::image_encodings::RGB8);
     } catch (cv_bridge::Exception &e) {
         printf("cv_bridge exception: %s\n", e.what());
         return -1;
@@ -59,10 +59,10 @@ int rknn_yolo::YoloV8Pose::infer(
         bboxes_kpoints_msgs::msg::BoundingBoxKeypoints bbox;
 
         bbox.probability = det_result->prop;
-        bbox.xmin = det_result->box.top;
-        bbox.ymin = det_result->box.left;
-        bbox.xmax = det_result->box.bottom;
-        bbox.ymax = det_result->box.right;
+        bbox.xmin = det_result->box.left;
+        bbox.ymin = det_result->box.top;
+        bbox.xmax = det_result->box.right;
+        bbox.ymax = det_result->box.bottom;
         bbox.id = 0;
         bbox.img_width = mat.cols;
         bbox.img_height = mat.rows;
@@ -90,16 +90,11 @@ int rknn_yolo::YoloV8Pose::cvmat_to_image_buffer(const cv::Mat &mat) {
     src_image.height_stride = mat.rows;
 
     // Determine format based on OpenCV Mat type
-    if (mat.channels() == 1) {
-        src_image.format = IMAGE_FORMAT_GRAY8;
-    } else if (mat.channels() == 3) {
-        // OpenCV uses BGR by default, but we'll assume RGB for consistency
-        src_image.format = IMAGE_FORMAT_RGB888;
-    } else if (mat.channels() == 4) {
-        src_image.format = IMAGE_FORMAT_RGBA8888;
-    } else {
+    // Since we requested RGB8 from cv_bridge, we expect 3 channels
+    if (mat.channels() != 3) {
         return -1; // Unsupported format
     }
+    src_image.format = IMAGE_FORMAT_RGB888;
 
     size_t required_size = mat.total() * mat.elemSize();
     // Only realloc if buffer is NULL or too small
@@ -115,15 +110,9 @@ int rknn_yolo::YoloV8Pose::cvmat_to_image_buffer(const cv::Mat &mat) {
     }
 
     // If OpenCV Mat is BGR and we need RGB, convert it
-    if (src_image.format == IMAGE_FORMAT_RGB888) {
-        // cv::Mat rgb_mat;
-        // cv::cvtColor(mat, rgb_mat, cv::COLOR_BGR2RGB);
-        // Oprimization: Convert directly into the allocated buffer
-        cv::Mat rgb_mat(mat.rows, mat.cols, CV_8UC3, src_image.virt_addr);
-        cv::cvtColor(mat, rgb_mat, cv::COLOR_BGR2RGB);
-    } else {
-        memcpy(src_image.virt_addr, mat.data, required_size);
-    }
+    // Since we requested RGB8 from cv_bridge, the mat is already in RGB format.
+    // We can just copy the data.
+    memcpy(src_image.virt_addr, mat.data, required_size);
 
     // No file descriptor for non-DMA memory
     src_image.fd = -1;

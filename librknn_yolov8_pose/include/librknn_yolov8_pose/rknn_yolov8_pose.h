@@ -28,7 +28,7 @@ public:
      * @return 0 on success, negative on error
      */
     int infer(
-        const sensor_msgs::msg::Image::ConstPtr img,
+        const sensor_msgs::msg::Image::ConstSharedPtr img,
         const bboxes_kpoints_msgs::msg::BoundingBoxesKeypoints::SharedPtr bboxes
     );
 
