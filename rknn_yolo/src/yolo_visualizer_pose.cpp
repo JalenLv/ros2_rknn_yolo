@@ -75,6 +75,14 @@ void YoloVisualizerPose::callback(
             cv::Scalar(0, 0, 255), 2
         );
 
+        // Draw ID
+        std::string id_text = "ID: " + std::to_string(bbox.id);
+        cv::putText(img,
+            id_text, cv::Point(bbox.xmin, bbox.ymax - 10),
+            cv::FONT_HERSHEY_SIMPLEX, 0.5,
+            cv::Scalar(0, 255, 0), 2
+        );
+
         // Draw skeleton (Orange)
         for (int i = 0; i < 38; i += 2) {
             int idx1 = skeleton[i] - 1;
