@@ -54,8 +54,6 @@ int rknn_yolo::YoloV8Pose::infer(
 
     // Populate bboxes with results
     bboxes->header = img->header;
-    bboxes->image_header = img->header;
-    bboxes->bounding_boxes.clear();
     for (int i = 0; i < od_results.count; i++) {
         object_detect_result* det_result = &(od_results.results[i]);
         bboxes_kpoints_msgs::msg::BoundingBoxKeypoints bbox;

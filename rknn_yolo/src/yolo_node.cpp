@@ -48,7 +48,6 @@ void YoloNode::timer_callback() {
 
     // Create output message
     auto bboxes_msg = std::make_shared<bboxes_kpoints_msgs::msg::BoundingBoxesKeypoints>();
-    bboxes_msg->header = msg->header;
 
     // Run inference
     if (yolo.infer(msg, bboxes_msg) != 0) {
