@@ -1,121 +1,247 @@
 #include <librknn_yolov8_pose/rknn_yolov8_pose.h>
 
+#include <cstdlib>
+#include <cstring>
+#include <new>
+#include <stdexcept>
 #include <string>
+#include <utility>
+
 #include <cv_bridge/cv_bridge.h>
+#include <sensor_msgs/image_encodings.hpp>
 
-rknn_yolo::YoloV8Pose::YoloV8Pose() {
-    rknn_app_ctx = {0};
-    src_image = {0};
+namespace rknn_yolo {
 
-    init_post_process();
+namespace {
 
-    if (init_yolov8_pose_model(MODEL_PATH, &rknn_app_ctx)) {
-        printf("Failed to initialize YOLOv8 Pose model.\n");
-        exit(1);
-    }
+constexpr char kLetterboxPaddingValue = 114;
+
+} // namespace
+
+YoloV8Pose::YoloV8Pose(const std::string& model_path, const std::string& label_path, rclcpp::Logger logger)
+    : logger_(std::move(logger)) {
+    init_model(model_path, label_path);
 }
 
-rknn_yolo::YoloV8Pose::~YoloV8Pose() {
+YoloV8Pose::~YoloV8Pose() {
+    release_model();
+}
+
+void YoloV8Pose::init_model(const std::string& model_path, const std::string& label_path) {
+    int ret = init_post_process(label_path.c_str());
+    if (ret != 0) {
+        RCLCPP_ERROR(logger_, "Failed to load labels from %s", label_path.c_str());
+        throw std::runtime_error("init_post_process failed");
+    }
+
+    ret = rknn_init(&rknn_ctx_, static_cast<void*>(const_cast<char*>(model_path.c_str())), 0, 0, nullptr);
+    if (ret < 0) {
+        RCLCPP_ERROR(logger_, "rknn_init failed for %s: %d", model_path.c_str(), ret);
+        deinit_post_process();
+        throw std::runtime_error("rknn_init failed");
+    }
+
+    ret = rknn_query(rknn_ctx_, RKNN_QUERY_IN_OUT_NUM, &io_num_, sizeof(io_num_));
+    if (ret != RKNN_SUCC) {
+        RCLCPP_ERROR(logger_, "rknn_query(RKNN_QUERY_IN_OUT_NUM) failed: %d", ret);
+        release_model();
+        throw std::runtime_error("rknn_query failed");
+    }
+
+    input_attrs_.resize(io_num_.n_input);
+    for (uint32_t i = 0; i < io_num_.n_input; ++i) {
+        auto& attr = input_attrs_[i];
+        std::memset(&attr, 0, sizeof(attr));
+        attr.index = i;
+        ret = rknn_query(rknn_ctx_, RKNN_QUERY_INPUT_ATTR, &attr, sizeof(attr));
+        if (ret != RKNN_SUCC) {
+            RCLCPP_ERROR(logger_, "rknn_query(RKNN_QUERY_INPUT_ATTR, %u) failed: %d", i, ret);
+            release_model();
+            throw std::runtime_error("rknn input attr query failed");
+        }
+    }
+
+    output_attrs_.resize(io_num_.n_output);
+    for (uint32_t i = 0; i < io_num_.n_output; ++i) {
+        auto& attr = output_attrs_[i];
+        std::memset(&attr, 0, sizeof(attr));
+        attr.index = i;
+        ret = rknn_query(rknn_ctx_, RKNN_QUERY_OUTPUT_ATTR, &attr, sizeof(attr));
+        if (ret != RKNN_SUCC) {
+            RCLCPP_ERROR(logger_, "rknn_query(RKNN_QUERY_OUTPUT_ATTR, %u) failed: %d", i, ret);
+            release_model();
+            throw std::runtime_error("rknn output attr query failed");
+        }
+    }
+
+    is_quant_ = output_attrs_[0].qnt_type == RKNN_TENSOR_QNT_AFFINE_ASYMMETRIC &&
+                output_attrs_[0].type != RKNN_TENSOR_FLOAT16;
+
+    if (input_attrs_[0].fmt == RKNN_TENSOR_NCHW) {
+        model_channel_ = input_attrs_[0].dims[1];
+        model_height_ = input_attrs_[0].dims[2];
+        model_width_ = input_attrs_[0].dims[3];
+    } else {
+        model_height_ = input_attrs_[0].dims[1];
+        model_width_ = input_attrs_[0].dims[2];
+        model_channel_ = input_attrs_[0].dims[3];
+    }
+
+    dst_image_.width = model_width_;
+    dst_image_.height = model_height_;
+    dst_image_.width_stride = model_width_;
+    dst_image_.height_stride = model_height_;
+    dst_image_.format = IMAGE_FORMAT_RGB888;
+    dst_image_.size = get_image_size(&dst_image_);
+    dst_image_.fd = -1;
+    dst_image_.virt_addr = static_cast<unsigned char*>(std::malloc(dst_image_.size));
+    if (dst_image_.virt_addr == nullptr) {
+        RCLCPP_ERROR(logger_, "Failed to allocate %d bytes for input buffer", dst_image_.size);
+        release_model();
+        throw std::bad_alloc();
+    }
+
+    RCLCPP_INFO(logger_, "model input: %dx%dx%d", model_width_, model_height_, model_channel_);
+}
+
+void YoloV8Pose::release_model() {
+    if (rknn_ctx_ != 0) {
+        rknn_destroy(rknn_ctx_);
+        rknn_ctx_ = 0;
+    }
+
+    if (dst_image_.virt_addr != nullptr) {
+        std::free(dst_image_.virt_addr);
+        dst_image_.virt_addr = nullptr;
+    }
+
+    input_attrs_.clear();
+    output_attrs_.clear();
     deinit_post_process();
-
-    if (release_yolov8_pose_model(&rknn_app_ctx)) {
-        printf("Failed to release YOLOv8 Pose model.\n");
-        exit(1);
-    }
-
-    if (src_image.virt_addr != NULL)
-        free(src_image.virt_addr);
 }
 
-int rknn_yolo::YoloV8Pose::infer(
-    const sensor_msgs::msg::Image::ConstSharedPtr img,
-    const bboxes_kpoints_msgs::msg::BoundingBoxesKeypoints::SharedPtr bboxes
-) {
+int YoloV8Pose::infer(
+    const sensor_msgs::msg::Image::ConstSharedPtr& img,
+    bboxes_kpoints_msgs::msg::BoundingBoxesKeypoints::SharedPtr bboxes) {
     cv_bridge::CvImagePtr cv_ptr;
     try {
         cv_ptr = cv_bridge::toCvCopy(img, sensor_msgs::image_encodings::RGB8);
-    } catch (cv_bridge::Exception &e) {
-        printf("cv_bridge exception: %s\n", e.what());
-        return -1;
-    }
-    cv::Mat mat = cv_ptr->image;
-
-    // Convert cv::Mat to image_buffer_t
-    if (cvmat_to_image_buffer(mat) != 0) {
-        printf("Failed to convert cv::Mat to image_buffer_t.\n");
+    } catch (const cv_bridge::Exception& e) {
+        RCLCPP_ERROR(logger_, "cv_bridge conversion failed: %s", e.what());
         return -1;
     }
 
-    // Run inference
-    if (inference_yolov8_pose_model(&rknn_app_ctx, &src_image, &od_results)) {
-        printf("Inference failed.\n");
+    cv::Mat& mat = cv_ptr->image;
+
+    // Point directly at the cv_bridge-owned buffer to avoid an extra memcpy.
+    src_image_.width = mat.cols;
+    src_image_.height = mat.rows;
+    src_image_.width_stride = mat.step[0] / static_cast<int>(mat.elemSize());
+    src_image_.height_stride = mat.rows;
+    src_image_.format = IMAGE_FORMAT_RGB888;
+    src_image_.virt_addr = mat.data;
+    src_image_.size = static_cast<int>(mat.total() * mat.elemSize());
+    src_image_.fd = -1;
+
+    dst_image_.width = model_width_;
+    dst_image_.height = model_height_;
+    dst_image_.width_stride = model_width_;
+    dst_image_.height_stride = model_height_;
+    dst_image_.format = IMAGE_FORMAT_RGB888;
+    dst_image_.fd = -1;
+
+    letterbox_t letter_box{};
+    if (convert_image_with_letterbox(&src_image_, &dst_image_, &letter_box, kLetterboxPaddingValue) != 0) {
+        RCLCPP_ERROR(logger_, "convert_image_with_letterbox failed");
         return -1;
     }
 
-    // Populate bboxes with results
-    bboxes->header = img->header;
-    for (int i = 0; i < od_results.count; i++) {
-        object_detect_result* det_result = &(od_results.results[i]);
+    std::vector<rknn_input> inputs(io_num_.n_input);
+    inputs[0].index = 0;
+    inputs[0].type = RKNN_TENSOR_UINT8;
+    inputs[0].fmt = RKNN_TENSOR_NHWC;
+    inputs[0].size = model_width_ * model_height_ * model_channel_;
+    inputs[0].buf = dst_image_.virt_addr;
+
+    int ret = rknn_inputs_set(rknn_ctx_, io_num_.n_input, inputs.data());
+    if (ret < 0) {
+        RCLCPP_ERROR(logger_, "rknn_inputs_set failed: %d", ret);
+        return -1;
+    }
+
+    ret = rknn_run(rknn_ctx_, nullptr);
+    if (ret < 0) {
+        RCLCPP_ERROR(logger_, "rknn_run failed: %d", ret);
+        return -1;
+    }
+
+    std::vector<rknn_output> outputs(io_num_.n_output);
+    for (uint32_t i = 0; i < io_num_.n_output; ++i) {
+        outputs[i].index = i;
+        outputs[i].want_float = !is_quant_;
+    }
+
+    ret = rknn_outputs_get(rknn_ctx_, io_num_.n_output, outputs.data(), nullptr);
+    if (ret < 0) {
+        RCLCPP_ERROR(logger_, "rknn_outputs_get failed: %d", ret);
+        return -1;
+    }
+
+    // Build a lightweight compatibility view for post_process().
+    rknn_app_context_t app_ctx{};
+    app_ctx.rknn_ctx = rknn_ctx_;
+    app_ctx.io_num = io_num_;
+    app_ctx.input_attrs = input_attrs_.data();
+    app_ctx.output_attrs = output_attrs_.data();
+    app_ctx.model_width = model_width_;
+    app_ctx.model_height = model_height_;
+    app_ctx.model_channel = model_channel_;
+    app_ctx.is_quant = is_quant_;
+
+    ret = post_process(&app_ctx, outputs.data(), &letter_box, BOX_THRESH, NMS_THRESH, &od_results_);
+    rknn_outputs_release(rknn_ctx_, io_num_.n_output, outputs.data());
+    if (ret != 0) {
+        RCLCPP_ERROR(logger_, "post_process failed: %d", ret);
+        return -1;
+    }
+
+    populate_results(mat, img->header, bboxes);
+    return 0;
+}
+
+void YoloV8Pose::populate_results(
+    const cv::Mat& mat,
+    const std_msgs::msg::Header& header,
+    bboxes_kpoints_msgs::msg::BoundingBoxesKeypoints::SharedPtr bboxes) {
+    bboxes->header = header;
+    bboxes->bounding_boxes.clear();
+    bboxes->bounding_boxes.reserve(od_results_.count);
+
+    for (int i = 0; i < od_results_.count; ++i) {
+        const object_detect_result& det_result = od_results_.results[i];
         bboxes_kpoints_msgs::msg::BoundingBoxKeypoints bbox;
-
-        bbox.probability = det_result->prop;
-        bbox.xmin = det_result->box.left;
-        bbox.ymin = det_result->box.top;
-        bbox.xmax = det_result->box.right;
-        bbox.ymax = det_result->box.bottom;
+        bbox.probability = det_result.prop;
+        bbox.xmin = det_result.box.left;
+        bbox.ymin = det_result.box.top;
+        bbox.xmax = det_result.box.right;
+        bbox.ymax = det_result.box.bottom;
         bbox.id = 0;
         bbox.img_width = mat.cols;
         bbox.img_height = mat.rows;
-        bbox.class_id_int = det_result->cls_id;
+        bbox.class_id_int = det_result.cls_id;
         bbox.class_id = std::string(coco_cls_to_name(bbox.class_id_int));
 
-        for (int j = 0; j < 17; ++j) {
+        bbox.keypoints.reserve(NUM_KEYPOINTS);
+        for (int j = 0; j < NUM_KEYPOINTS; ++j) {
             bboxes_kpoints_msgs::msg::Keypoint keypoint;
-            keypoint.x = det_result->keypoints[j][0];
-            keypoint.y = det_result->keypoints[j][1];
-            keypoint.score = det_result->keypoints[j][2];
+            keypoint.x = det_result.keypoints[j][0];
+            keypoint.y = det_result.keypoints[j][1];
+            keypoint.score = det_result.keypoints[j][2];
             bbox.keypoints.push_back(keypoint);
         }
 
-        bboxes->bounding_boxes.push_back(bbox);
+        bboxes->bounding_boxes.push_back(std::move(bbox));
     }
-
-    return 0;
 }
 
-int rknn_yolo::YoloV8Pose::cvmat_to_image_buffer(const cv::Mat &mat) {
-    src_image.width = mat.cols;
-    src_image.height = mat.rows;
-    src_image.width_stride = mat.cols;
-    src_image.height_stride = mat.rows;
-
-    // Determine format based on OpenCV Mat type
-    // Since we requested RGB8 from cv_bridge, we expect 3 channels
-    if (mat.channels() != 3) {
-        return -1; // Unsupported format
-    }
-    src_image.format = IMAGE_FORMAT_RGB888;
-
-    size_t required_size = mat.total() * mat.elemSize();
-    // Only realloc if buffer is NULL or too small
-    if (src_image.virt_addr != NULL || src_image.size < required_size) {
-        if (src_image.virt_addr != NULL) {
-            free(src_image.virt_addr);
-        }
-        src_image.virt_addr = (unsigned char *)malloc(required_size);
-        if (src_image.virt_addr == nullptr) {
-           return -1; // Memory allocation failed
-        }
-        src_image.size = required_size;
-    }
-
-    // If OpenCV Mat is BGR and we need RGB, convert it
-    // Since we requested RGB8 from cv_bridge, the mat is already in RGB format.
-    // We can just copy the data.
-    memcpy(src_image.virt_addr, mat.data, required_size);
-
-    // No file descriptor for non-DMA memory
-    src_image.fd = -1;
-
-    return 0;
-}
+} // namespace rknn_yolo

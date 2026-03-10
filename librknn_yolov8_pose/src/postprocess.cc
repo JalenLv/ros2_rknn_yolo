@@ -12,31 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "librknn_yolov8_pose/yolov8-pose.h"
+#include "librknn_yolov8_pose/postprocess.h"
 
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/time.h>
-
-#ifndef RKNPU1
 #include <Float16.h>
-#endif
-
-#include <iostream>
-#include <cmath>
-#include <algorithm>
 
 #include <set>
 #include <vector>
 
-#ifndef LABEL_NAME_TXT_PATH
-#define LABEL_NAME_TXT_PATH "/home/orangepi/ros2_ws/src/rknn_yolo/librknn_yolov8_pose/model/yolov8_pose_labels_list.txt"
-#endif
-
 static char *labels[OBJ_CLASS_NUM];
+static char null_name[] = "null";
 
 inline static int clamp(float val, int min, int max) { return val > min ? (val < max ? val : max) : min; }
 
@@ -75,7 +64,7 @@ static char *readLine(FILE *fp, char *buffer, int *len) {
 
 static int readLines(const char *fileName, char *lines[], int max_line) {
     FILE *file = fopen(fileName, "r");
-    char *s;
+    char *s = NULL;
     int i = 0;
     int n = 0;
 
@@ -94,9 +83,7 @@ static int readLines(const char *fileName, char *lines[], int max_line) {
 }
 
 static int loadLabelName(const char *locationFilename, char *label[]) {
-    printf("load lable %s\n", locationFilename);
-    readLines(locationFilename, label, OBJ_CLASS_NUM);
-    return 0;
+    return readLines(locationFilename, label, OBJ_CLASS_NUM) < 0 ? -1 : 0;
 }
 
 static float CalculateOverlap(float xmin0, float ymin0, float xmax0, float ymax0, float xmin1, float ymin1, float xmax1,
@@ -183,27 +170,18 @@ static float unsigmoid(float y) {
     return -1.0 * logf((1.0 / y) - 1.0);
 }
 
-inline static int32_t __clip(float val, float min, float max) {
+inline static int32_t clip_val(float val, float min, float max) {
     float f = val <= min ? min : (val >= max ? max : val);
     return f;
 }
 
 static int8_t qnt_f32_to_affine(float f32, int32_t zp, float scale) {
     float dst_val = (f32 / scale) + zp;
-    int8_t res = (int8_t)__clip(dst_val, -128, 127);
-    return res;
-}
-
-static uint8_t qnt_f32_to_affine_u8(float f32, int32_t zp, float scale) {
-    float dst_val = (f32 / scale) + zp;
-    uint8_t res = (uint8_t)__clip(dst_val, 0, 255);
+    int8_t res = (int8_t)clip_val(dst_val, -128, 127);
     return res;
 }
 
 static float deqnt_affine_to_f32(int8_t qnt, int32_t zp, float scale) {
-    return ((float)qnt - (float)zp) * scale;
-}
-static float deqnt_affine_u8_to_f32(uint8_t qnt, int32_t zp, float scale) {
     return ((float)qnt - (float)zp) * scale;
 }
 
@@ -231,7 +209,6 @@ static int process_i8(int8_t *input, int grid_h, int grid_w, int stride,
                       std::vector<float> &boxes, std::vector<float> &boxScores, std::vector<int> &classId, float threshold,
                       int32_t zp, float scale, int index) {
     int input_loc_len = 64;
-    int tensor_len = input_loc_len + OBJ_CLASS_NUM;
     int validCount = 0;
 
     int8_t thres_i8 = qnt_f32_to_affine(unsigmoid(threshold), zp, scale);
@@ -282,68 +259,13 @@ static int process_i8(int8_t *input, int grid_h, int grid_w, int stride,
     return validCount;
 }
 
-
-static int process_u8(uint8_t *input, int grid_h, int grid_w, int stride,
-                      std::vector<float> &boxes, std::vector<float> &boxScores, std::vector<int> &classId, float threshold,
-                      int32_t zp, float scale, int index) {
-    int input_loc_len = 64;
-    int tensor_len = input_loc_len + OBJ_CLASS_NUM;
-    int validCount = 0;
-
-    uint8_t thres_i8 = qnt_f32_to_affine_u8(unsigmoid(threshold), zp, scale);
-    for (int h = 0; h < grid_h; h++) {
-        for (int w = 0; w < grid_w; w++) {
-            for (int a = 0; a < OBJ_CLASS_NUM; a++) {
-                if(input[(input_loc_len + a)*grid_w * grid_h + h * grid_w + w ] >= thres_i8) { //[1,tensor_len,grid_h,grid_w]
-                    float box_conf_f32 = sigmoid(deqnt_affine_u8_to_f32(input[(input_loc_len + a) * grid_w * grid_h + h * grid_w + w ],
-                                                 zp, scale));
-                    float loc[input_loc_len];
-                    for (int i = 0; i < input_loc_len; ++i) {
-                        loc[i] = deqnt_affine_u8_to_f32(input[i * grid_w * grid_h + h * grid_w + w], zp, scale);
-                    }
-
-                    for (int i = 0; i < input_loc_len / 16; ++i) {
-                        softmax(&loc[i * 16], 16);
-                    }
-                    float xywh_[4] = {0, 0, 0, 0};
-                    float xywh[4] = {0, 0, 0, 0};
-                    for (int dfl = 0; dfl < 16; ++dfl) {
-                        xywh_[0] += loc[dfl] * dfl;
-                        xywh_[1] += loc[1 * 16 + dfl] * dfl;
-                        xywh_[2] += loc[2 * 16 + dfl] * dfl;
-                        xywh_[3] += loc[3 * 16 + dfl] * dfl;
-                    }
-                    xywh_[0]=(w+0.5)-xywh_[0];
-                    xywh_[1]=(h+0.5)-xywh_[1];
-                    xywh_[2]=(w+0.5)+xywh_[2];
-                    xywh_[3]=(h+0.5)+xywh_[3];
-                    xywh[0]=((xywh_[0]+xywh_[2])/2)*stride;
-                    xywh[1]=((xywh_[1]+xywh_[3])/2)*stride;
-                    xywh[2]=(xywh_[2]-xywh_[0])*stride;
-                    xywh[3]=(xywh_[3]-xywh_[1])*stride;
-                    xywh[0]=xywh[0]-xywh[2]/2;
-                    xywh[1]=xywh[1]-xywh[3]/2;
-                    boxes.push_back(xywh[0]);//x
-                    boxes.push_back(xywh[1]);//y
-                    boxes.push_back(xywh[2]);//w
-                    boxes.push_back(xywh[3]);//h
-                    boxes.push_back(float(index + (h * grid_w) + w));//keypoints index
-                    boxScores.push_back(box_conf_f32);
-                    classId.push_back(a);
-                    validCount++;
-                }
-            }
-        }
-    }
-    return validCount;
-}
-
 static int process_fp32(float *input, int grid_h, int grid_w, int stride,
                       std::vector<float> &boxes, std::vector<float> &boxScores, std::vector<int> &classId, float threshold,
                       int32_t zp, float scale, int index) {
     int input_loc_len = 64;
-    int tensor_len = input_loc_len + OBJ_CLASS_NUM;
     int validCount = 0;
+    (void)zp;
+    (void)scale;
     float thres_fp = unsigmoid(threshold);
     for (int h = 0; h < grid_h; h++) {
         for (int w = 0; w < grid_w; w++) {
@@ -393,11 +315,7 @@ static int process_fp32(float *input, int grid_h, int grid_w, int stride,
 
 int post_process(rknn_app_context_t *app_ctx, void *outputs, letterbox_t *letter_box, float conf_threshold, float nms_threshold,
                  object_detect_result_list *od_results) {
-#if defined(RV1106_1103)
-    rknn_tensor_mem **_outputs = (rknn_tensor_mem **)outputs;
-#else
     rknn_output *_outputs = (rknn_output *)outputs;
-#endif
     std::vector<float> filterBoxes;
     std::vector<float> objProbs;
     std::vector<int> classId;
@@ -409,23 +327,6 @@ int post_process(rknn_app_context_t *app_ctx, void *outputs, letterbox_t *letter
     int model_in_h = app_ctx->model_height;
     memset(od_results, 0, sizeof(object_detect_result_list));
     int index = 0;
-#ifdef RKNPU1
-    for (int i = 0; i < 3; i++) {
-        grid_h = app_ctx->output_attrs[i].dims[1];
-        grid_w = app_ctx->output_attrs[i].dims[0];
-        stride = model_in_h / grid_h;
-        if (app_ctx->is_quant) {
-            validCount += process_u8((uint8_t *)_outputs[i].buf, grid_h, grid_w, stride, filterBoxes, objProbs,
-                                     classId, conf_threshold, app_ctx->output_attrs[i].zp, app_ctx->output_attrs[i].scale, index);
-        }
-        else
-        {
-            validCount += process_fp32((float *)_outputs[i].buf, grid_h, grid_w, stride, filterBoxes, objProbs,
-                                     classId, conf_threshold, app_ctx->output_attrs[i].zp, app_ctx->output_attrs[i].scale, index);
-        }
-        index += grid_h * grid_w;
-    }
-#else
     for (int i = 0; i < 3; i++) {
         grid_h = app_ctx->output_attrs[i].dims[2];
         grid_w = app_ctx->output_attrs[i].dims[3];
@@ -441,7 +342,7 @@ int post_process(rknn_app_context_t *app_ctx, void *outputs, letterbox_t *letter
         }
         index += grid_h * grid_w;
     }
-#endif
+    const int total_anchors = index;
     // no object detect
     if (validCount <= 0) {
         return 0;
@@ -475,28 +376,19 @@ int post_process(rknn_app_context_t *app_ctx, void *outputs, letterbox_t *letter
 
         for (int j = 0; j < 17; ++j) {
             if (app_ctx->is_quant) {
-                #ifdef RKNPU1
-                        od_results->results[last_count].keypoints[j][0] = (deqnt_affine_u8_to_f32(((uint8_t *)_outputs[3].buf)[j * 3 * 8400 + 0 * 8400 + keypoints_index],
-                                app_ctx->output_attrs[3].zp, app_ctx->output_attrs[3].scale)- letter_box->x_pad)/ letter_box->scale;
-                        od_results->results[last_count].keypoints[j][1] = (deqnt_affine_u8_to_f32(((uint8_t *)_outputs[3].buf)[j * 3 * 8400 + 1 * 8400 + keypoints_index],
-                                app_ctx->output_attrs[3].zp, app_ctx->output_attrs[3].scale)- letter_box->y_pad)/ letter_box->scale;
-                        od_results->results[last_count].keypoints[j][2] = deqnt_affine_u8_to_f32(((uint8_t *)_outputs[3].buf)[j * 3 * 8400 + 2 * 8400 + keypoints_index],
-                                app_ctx->output_attrs[3].zp, app_ctx->output_attrs[3].scale);       
-                #else
-                        od_results->results[last_count].keypoints[j][0] = ((float)((rknpu2::float16 *)_outputs[3].buf)[j*3*8400+0*8400+keypoints_index] 
+                        od_results->results[last_count].keypoints[j][0] = ((float)((rknpu2::float16 *)_outputs[3].buf)[j * 3 * total_anchors + 0 * total_anchors + keypoints_index]
                                                                         - letter_box->x_pad)/ letter_box->scale;
-                        od_results->results[last_count].keypoints[j][1] = ((float)((rknpu2::float16 *)_outputs[3].buf)[j*3*8400+1*8400+keypoints_index] 
+                        od_results->results[last_count].keypoints[j][1] = ((float)((rknpu2::float16 *)_outputs[3].buf)[j * 3 * total_anchors + 1 * total_anchors + keypoints_index]
                                                                             - letter_box->y_pad)/ letter_box->scale;
-                        od_results->results[last_count].keypoints[j][2] = (float)((rknpu2::float16 *)_outputs[3].buf)[j*3*8400+2*8400+keypoints_index];
-                #endif
+                        od_results->results[last_count].keypoints[j][2] = (float)((rknpu2::float16 *)_outputs[3].buf)[j * 3 * total_anchors + 2 * total_anchors + keypoints_index];
             }
             else
             {
-                od_results->results[last_count].keypoints[j][0] = (((float *)_outputs[3].buf)[j*3*8400+0*8400+keypoints_index] 
+                od_results->results[last_count].keypoints[j][0] = (((float *)_outputs[3].buf)[j * 3 * total_anchors + 0 * total_anchors + keypoints_index]
                                                                 - letter_box->x_pad)/ letter_box->scale;
-                od_results->results[last_count].keypoints[j][1] = (((float *)_outputs[3].buf)[j*3*8400+1*8400+keypoints_index] 
+                od_results->results[last_count].keypoints[j][1] = (((float *)_outputs[3].buf)[j * 3 * total_anchors + 1 * total_anchors + keypoints_index]
                                                                     - letter_box->y_pad)/ letter_box->scale;
-                od_results->results[last_count].keypoints[j][2] = ((float *)_outputs[3].buf)[j*3*8400+2*8400+keypoints_index];
+                od_results->results[last_count].keypoints[j][2] = ((float *)_outputs[3].buf)[j * 3 * total_anchors + 2 * total_anchors + keypoints_index];
             }
         }
 
@@ -515,11 +407,11 @@ int post_process(rknn_app_context_t *app_ctx, void *outputs, letterbox_t *letter
     return 0;
 }
 
-int init_post_process() {
+int init_post_process(const char* label_path) {
     int ret = 0;
-    ret = loadLabelName(LABEL_NAME_TXT_PATH, labels);
+    ret = loadLabelName(label_path, labels);
     if (ret < 0) {
-        printf("Load %s failed!\n", LABEL_NAME_TXT_PATH);
+        printf("Load %s failed!\n", label_path);
         return -1;
     }
     return 0;
@@ -528,14 +420,14 @@ int init_post_process() {
 char *coco_cls_to_name(int cls_id) {
 
     if (cls_id >= OBJ_CLASS_NUM) {
-        return "null";
+        return null_name;
     }
 
     if (labels[cls_id]) {
         return labels[cls_id];
     }
 
-    return "null";
+    return null_name;
 }
 
 void deinit_post_process() {

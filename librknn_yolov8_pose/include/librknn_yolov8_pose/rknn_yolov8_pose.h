@@ -1,25 +1,30 @@
 #ifndef RKNN_YOLOV8_POSE_H
 #define RKNN_YOLOV8_POSE_H
 
-#include "yolov8-pose.h"
-#include "postprocess.h"
+#include <string>
+#include <vector>
 
 #include <opencv2/opencv.hpp>
-
+#include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/image.hpp>
+#include <std_msgs/msg/header.hpp>
 #include <bboxes_kpoints_msgs/msg/bounding_boxes_keypoints.hpp>
 #include <bboxes_kpoints_msgs/msg/bounding_box_keypoints.hpp>
 
-#ifndef MODEL_PATH
-#define MODEL_PATH "/home/orangepi/ros2_ws/src/rknn_yolo/librknn_yolov8_pose/model/yolov8_pose.rknn"
-#endif
+#include "rknn_api.h"
+#include "librknn_yolov8_pose/postprocess.h"
 
 namespace rknn_yolo {
 
+static constexpr int NUM_KEYPOINTS = 17;
+
 class YoloV8Pose {
 public:
-    YoloV8Pose();
+    YoloV8Pose(const std::string& model_path, const std::string& label_path, rclcpp::Logger logger);
     ~YoloV8Pose();
+
+    YoloV8Pose(const YoloV8Pose&) = delete;
+    YoloV8Pose& operator=(const YoloV8Pose&) = delete;
 
     /**
      * @brief Infer bounding boxes with keypoints given an image message
@@ -28,26 +33,31 @@ public:
      * @return 0 on success, negative on error
      */
     int infer(
-        const sensor_msgs::msg::Image::ConstSharedPtr img,
-        const bboxes_kpoints_msgs::msg::BoundingBoxesKeypoints::SharedPtr bboxes
-    );
+        const sensor_msgs::msg::Image::ConstSharedPtr& img,
+        bboxes_kpoints_msgs::msg::BoundingBoxesKeypoints::SharedPtr bboxes);
 
 private:
-    const int skeleton[38] = {
-        16, 14, 14, 12, 17, 15, 15, 13, 12, 13, 6, 12, 7, 13, 6, 7, 6,
-        8, 7, 9, 8, 10, 9, 11, 2, 3, 1, 2, 1, 3, 2, 4, 3, 5, 4, 6, 5, 7
-    };
+    rclcpp::Logger logger_;
 
-    rknn_app_context_t rknn_app_ctx;
-    image_buffer_t src_image;
-    object_detect_result_list od_results;
+    rknn_context rknn_ctx_ = 0;
+    rknn_input_output_num io_num_{};
+    std::vector<rknn_tensor_attr> input_attrs_;
+    std::vector<rknn_tensor_attr> output_attrs_;
+    int model_width_ = 0;
+    int model_height_ = 0;
+    int model_channel_ = 0;
+    bool is_quant_ = false;
 
-    /**
-     * @brief Convert cv::Mat to image_buffer_t
-     * @param mat Input OpenCV Mat
-     * @return 0 on success, negative on error
-     */
-    int cvmat_to_image_buffer(const cv::Mat &mat);
+    image_buffer_t src_image_{};
+    image_buffer_t dst_image_{};
+    object_detect_result_list od_results_{};
+
+    void init_model(const std::string& model_path, const std::string& label_path);
+    void release_model();
+    void populate_results(
+        const cv::Mat& mat,
+        const std_msgs::msg::Header& header,
+        bboxes_kpoints_msgs::msg::BoundingBoxesKeypoints::SharedPtr bboxes);
 };
 
 } // namespace rknn_yolo

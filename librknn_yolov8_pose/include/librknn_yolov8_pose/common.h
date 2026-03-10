@@ -1,9 +1,8 @@
-#ifndef _RKNN_MODEL_ZOO_COMMON_H_
-#define _RKNN_MODEL_ZOO_COMMON_H_
+#ifndef RKNN_YOLOV8_POSE_COMMON_H
+#define RKNN_YOLOV8_POSE_COMMON_H
 
 /**
  * @brief Image pixel format
- * 
  */
 typedef enum {
     IMAGE_FORMAT_GRAY8,
@@ -15,7 +14,6 @@ typedef enum {
 
 /**
  * @brief Image buffer
- * 
  */
 typedef struct {
     int width;
@@ -30,7 +28,6 @@ typedef struct {
 
 /**
  * @brief Image rectangle
- * 
  */
 typedef struct {
     int left;
@@ -39,16 +36,4 @@ typedef struct {
     int bottom;
 } image_rect_t;
 
-/**
- * @brief Image obb rectangle
- * 
- */
-typedef struct {
-    int x;
-    int y;
-    int w;
-    int h;
-    float angle;
-} image_obb_box_t;
-
-#endif //_RKNN_MODEL_ZOO_COMMON_H_
+#endif // RKNN_YOLOV8_POSE_COMMON_H

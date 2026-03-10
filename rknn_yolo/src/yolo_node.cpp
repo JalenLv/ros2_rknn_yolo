@@ -1,15 +1,22 @@
 #include "rknn_yolo/yolo_node.hpp"
 
+#include <ament_index_cpp/get_package_share_directory.hpp>
 #include <rclcpp/qos.hpp>
 
-YoloNode::YoloNode(const std::string &node_name) : Node(node_name), yolo() {
+YoloNode::YoloNode(const std::string &node_name) : Node(node_name) {
     RCLCPP_INFO(this->get_logger(), "Initializing YoloNode...");
 
-    // Subscribe to image topic using message_filters
+    std::string share_dir = ament_index_cpp::get_package_share_directory("librknn_yolov8_pose");
+    this->declare_parameter("model_path", share_dir + "/model/yolov8_pose.rknn");
+    this->declare_parameter("label_path", share_dir + "/model/yolov8_pose_labels_list.txt");
+    std::string model_path = this->get_parameter("model_path").as_string();
+    std::string label_path = this->get_parameter("label_path").as_string();
+    yolo = std::make_unique<rknn_yolo::YoloV8Pose>(model_path, label_path, this->get_logger());
+
     this->declare_parameter("image_topic", "/image_raw");
     std::string image_topic = this->get_parameter("image_topic").as_string();
     image_subscriber.subscribe(this, image_topic, rmw_qos_profile_sensor_data);
-    
+
     // Create a cache with a history size of 10
     image_cache = std::make_shared<message_filters::Cache<sensor_msgs::msg::Image>>(image_subscriber, 10);
 
@@ -40,9 +47,7 @@ YoloNode::~YoloNode() {
 void YoloNode::timer_callback() {
     // Get the latest image from the cache before the current time
     auto msg = image_cache->getElemBeforeTime(this->now());
-
     if (!msg) {
-        // No image available yet
         return;
     }
 
