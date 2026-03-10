@@ -55,7 +55,7 @@ void YoloNode::timer_callback() {
     auto bboxes_msg = std::make_shared<bboxes_kpoints_msgs::msg::BoundingBoxesKeypoints>();
 
     // Run inference
-    if (yolo.infer(msg, bboxes_msg) != 0) {
+    if (yolo->infer(msg, bboxes_msg) != 0) {
         RCLCPP_ERROR(this->get_logger(), "Inference failed");
         return;
     }
