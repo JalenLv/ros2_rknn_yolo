@@ -1,305 +1,18 @@
+#include <math.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <dirent.h>
-#include <math.h>
-#include <sys/time.h>
+#include <string.h>
 
 #include "im2d.h"
 #include "drmrga.h"
 
-#define STB_IMAGE_IMPLEMENTATION
-#define STBI_NO_THREAD_LOCALS
-#define STBI_ONLY_JPEG
-#define STBI_ONLY_PNG
-#include "stb_image.h"
-
-#define STB_IMAGE_WRITE_IMPLEMENTATION
-#include "stb_image_write.h"
-
 #include "librknn_yolov8_pose/image_utils.h"
-#include "librknn_yolov8_pose/file_utils.h"
-
-static const char* filter_image_names[] = {
-    "jpg",
-    "jpeg",
-    "JPG",
-    "JPEG",
-    "png",
-    "PNG",
-    "data",
-    NULL
-};
-
-#ifndef DISABLE_LIBJPEG
-#include "turbojpeg.h"
-static const char* subsampName[TJ_NUMSAMP] = {"4:4:4", "4:2:2", "4:2:0", "Grayscale", "4:4:0", "4:1:1"};
-static const char* colorspaceName[TJ_NUMCS] = {"RGB", "YCbCr", "GRAY", "CMYK", "YCCK"};
-
-static int read_image_jpeg(const char* path, image_buffer_t* image)
-{
-    FILE* jpegFile = NULL;
-    unsigned long jpegSize;
-    int flags = 0;
-    int width, height;
-    int origin_width, origin_height;
-    unsigned char* imgBuf = NULL;
-    unsigned char* jpegBuf = NULL;
-    unsigned long size;
-    unsigned short orientation = 1;
-    struct timeval tv1, tv2;
-
-    if ((jpegFile = fopen(path, "rb")) == NULL) {
-        printf("open input file failure\n");
-    }
-    if (fseek(jpegFile, 0, SEEK_END) < 0 || (size = ftell(jpegFile)) < 0 || fseek(jpegFile, 0, SEEK_SET) < 0) {
-        printf("determining input file size failure\n");
-    }
-    if (size == 0) {
-        printf("determining input file size, Input file contains no data\n");
-    }
-    jpegSize = (unsigned long)size;
-    if ((jpegBuf = (unsigned char*)malloc(jpegSize * sizeof(unsigned char))) == NULL) {
-        printf("allocating JPEG buffer\n");
-    }
-    if (fread(jpegBuf, jpegSize, 1, jpegFile) < 1) {
-        printf("reading input file");
-    }
-    fclose(jpegFile);
-    jpegFile = NULL;
-
-    tjhandle handle = NULL;
-    int subsample, colorspace;
-    int padding = 1;
-    int ret = 0;
-
-    handle = tjInitDecompress();
-    ret = tjDecompressHeader3(handle, jpegBuf, size, &origin_width, &origin_height, &subsample, &colorspace);
-    if (ret < 0) {
-        printf("header file error, errorStr:%s, errorCode:%d\n", tjGetErrorStr(), tjGetErrorCode(handle));
-        return -1;
-    }
-
-    // 对图像做裁剪16对齐，利于后续rga操作
-    int crop_width = origin_width / 16 * 16;
-    int crop_height = origin_height / 16 * 16;
-
-    printf("origin size=%dx%d crop size=%dx%d\n", origin_width, origin_height, crop_width, crop_height);
-
-    // gettimeofday(&tv1, NULL);
-    ret = tjDecompressHeader3(handle, jpegBuf, size, &width, &height, &subsample, &colorspace);
-    if (ret < 0) {
-        printf("header file error, errorStr:%s, errorCode:%d\n", tjGetErrorStr(), tjGetErrorCode(handle));
-        return -1;
-    }
-    printf("input image: %d x %d, subsampling: %s, colorspace: %s, orientation: %d\n", 
-            width, height, subsampName[subsample], colorspaceName[colorspace], orientation);
-    int sw_out_size = width * height * 3;
-    unsigned char* sw_out_buf = image->virt_addr;
-    if (sw_out_buf == NULL) {
-        sw_out_buf = (unsigned char*)malloc(sw_out_size * sizeof(unsigned char));
-    }
-    if (sw_out_buf == NULL) {
-        printf("sw_out_buf is NULL\n");
-        goto out;
-    }
-
-    flags |= 0;
-
-    // 错误码为0时，表示警告，错误码为-1时表示错误
-    int pixelFormat = TJPF_RGB;
-    ret = tjDecompress2(handle, jpegBuf, size, sw_out_buf, width, 0, height, pixelFormat, flags);
-    // ret = tjDecompressToYUV2(handle, jpeg_buf, size, dst_buf, *width, padding, *height, flags);
-    if ((0 != tjGetErrorCode(handle)) && (ret < 0)) {
-        printf("error : decompress to yuv failed, errorStr:%s, errorCode:%d\n", tjGetErrorStr(),
-               tjGetErrorCode(handle));
-        goto out;
-    }
-    if ((0 == tjGetErrorCode(handle)) && (ret < 0)) {
-        printf("warning : errorStr:%s, errorCode:%d\n", tjGetErrorStr(), tjGetErrorCode(handle));
-    }
-    tjDestroy(handle);
-    // gettimeofday(&tv2, NULL);
-    // printf("decode time %ld ms\n", (tv2.tv_sec-tv1.tv_sec)*1000 + (tv2.tv_usec-tv1.tv_usec)/1000);
-
-    image->width = width;
-    image->height = height;
-    image->format = IMAGE_FORMAT_RGB888;
-    image->virt_addr = sw_out_buf;
-    image->size = sw_out_size;
-out:
-    if (jpegBuf) {
-        free(jpegBuf);
-    }
-    return 0;
-}
-
-static int write_image_jpeg(const char* path, int quality, const image_buffer_t* image)
-{
-    int ret;
-    int jpegSubsamp = TJSAMP_422;
-    unsigned char* jpegBuf = NULL;
-    unsigned long jpegSize = 0;
-    int flags = 0;
-
-    const unsigned char* data = image->virt_addr;
-    int width = image->width;
-    int height = image->height;
-    int pixelFormat = TJPF_RGB;
-
-	tjhandle handle = tjInitCompress();
-
-    if (image->format == IMAGE_FORMAT_RGB888) {
-        ret = tjCompress2(handle, data, width, 0, height, pixelFormat, &jpegBuf, &jpegSize, jpegSubsamp, quality, flags);
-    } else {
-        printf("write_image_jpeg: pixel format %d not support\n", image->format);
-        return -1;
-    }
-
-	// printf("ret=%d jpegBuf=%p jpegSize=%d\n", ret, jpegBuf, jpegSize);
-    if (jpegBuf != NULL && jpegSize > 0) {
-        write_data_to_file(path, (const char*)jpegBuf, jpegSize);
-        tjFree(jpegBuf);
-    }
-    tjDestroy(handle);
-
-	return 0;
-}
-#endif
-
-static int image_file_filter(const struct dirent *entry)
-{
-    const char ** filter;
-
-    for (filter = filter_image_names; *filter; ++filter) {
-        if(strstr(entry->d_name, *filter) != NULL) {
-            return 1;
-        }
-    }
-    return 0;
-}
-
-static int read_image_raw(const char* path, image_buffer_t* image)
-{
-    FILE *fp = fopen(path, "rb");
-    if(fp == NULL) {
-        printf("fopen %s fail!\n", path);
-        return -1;
-    }
-    fseek(fp, 0, SEEK_END);
-    int file_size = ftell(fp);
-    unsigned char *data = image->virt_addr;
-    if (image->virt_addr == NULL) {
-        data = (unsigned char *)malloc(file_size+1);
-    }
-    data[file_size] = 0;
-    fseek(fp, 0, SEEK_SET);
-    if(file_size != fread(data, 1, file_size, fp)) {
-        printf("fread %s fail!\n", path);
-        free(data);
-        return -1;
-    }
-    if(fp) {
-        fclose(fp);
-    }
-    if (image->virt_addr == NULL) {
-        image->virt_addr = data;
-        image->size = file_size;
-    }
-
-    return 0;
-}
-
-static int read_image_stb(const char* path, image_buffer_t* image)
-{
-    // 默认图像为3通道
-    int w, h, c;
-    unsigned char* pixeldata = stbi_load(path, &w, &h, &c, 0);
-    if (!pixeldata) {
-        printf("error: read image %s fail\n", path);
-        return -1;
-    }
-    // printf("load image wxhxc=%dx%dx%d path=%s\n", w, h, c, path);
-    int size = w * h * c;
-
-    // 设置图像数据
-    if (image->virt_addr != NULL) {
-        memcpy(image->virt_addr, pixeldata, size);
-        stbi_image_free(pixeldata);
-    } else {
-        image->virt_addr = pixeldata;
-    }
-    image->width = w;
-    image->height = h;
-    if (c == 4) {
-        image->format = IMAGE_FORMAT_RGBA8888;
-    } else if (c == 1) {
-        image->format = IMAGE_FORMAT_GRAY8;
-    } else {
-        image->format = IMAGE_FORMAT_RGB888;
-    }
-    return 0;
-}
-
-int read_image(const char* path, image_buffer_t* image)
-{
-    const char* _ext = strrchr(path, '.');
-    if (!_ext) {
-        // missing extension
-        return -1;
-    }
-    if (strcmp(_ext, ".data") == 0) {
-        return read_image_raw(path, image);
-#ifndef DISABLE_LIBJPEG
-    } else if (strcmp(_ext, ".jpg") == 0 || strcmp(_ext, ".jpeg") == 0 || strcmp(_ext, ".JPG") == 0 ||
-        strcmp(_ext, ".JPEG") == 0) {
-        return read_image_jpeg(path, image);
-#endif
-    } else {
-        return read_image_stb(path, image);
-    }
-}
-
-int write_image(const char* path, const image_buffer_t* img)
-{
-    int ret;
-    int width = img->width;
-    int height = img->height;
-    int channel = 3;
-    void* data = img->virt_addr;
-    printf("write_image path: %s width=%d height=%d channel=%d data=%p\n",
-        path, width, height, channel, data);
-
-    const char* _ext = strrchr(path, '.');
-    if (!_ext) {
-        // missing extension
-        return -1;
-    }
-
-    if (strcmp(_ext, ".png") == 0 | strcmp(_ext, ".PNG") == 0) {
-        ret = stbi_write_png(path, width, height, channel, data, 0);
-
-    } else if (strcmp(_ext, ".jpg") == 0 || strcmp(_ext, ".jpeg") == 0 || strcmp(_ext, ".JPG") == 0 ||
-        strcmp(_ext, ".JPEG") == 0) {
-        int quality = 95;
-#ifndef DISABLE_LIBJPEG
-        ret = write_image_jpeg(path, quality, img);
-#else
-        ret = stbi_write_jpg(path, width, height, channel, data, quality);
-#endif
-    } else if (strcmp(_ext, ".data") == 0 | strcmp(_ext, ".DATA") == 0) {
-        int size = get_image_size(img);
-        ret = write_data_to_file(path, data, size);
-    } else {
-        // unknown extension type
-        return -1;
-    }
-    return ret;
-}
 
 static int crop_and_scale_image_c(int channel, unsigned char *src, int src_width, int src_height,
-                                    int crop_x, int crop_y, int crop_width, int crop_height,
-                                    unsigned char *dst, int dst_width, int dst_height,
-                                    int dst_box_x, int dst_box_y, int dst_box_width, int dst_box_height) {
+                                  int crop_x, int crop_y, int crop_width, int crop_height,
+                                  unsigned char *dst, int dst_width, int dst_height,
+                                  int dst_box_x, int dst_box_y, int dst_box_width, int dst_box_height) {
     if (dst == NULL) {
         printf("dst buffer is null\n");
         return -1;
@@ -307,12 +20,6 @@ static int crop_and_scale_image_c(int channel, unsigned char *src, int src_width
 
     float x_ratio = (float)crop_width / (float)dst_box_width;
     float y_ratio = (float)crop_height / (float)dst_box_height;
-
-    // printf("src_width=%d src_height=%d crop_x=%d crop_y=%d crop_width=%d crop_height=%d\n",
-    //     src_width, src_height, crop_x, crop_y, crop_width, crop_height);
-    // printf("dst_width=%d dst_height=%d dst_box_x=%d dst_box_y=%d dst_box_width=%d dst_box_height=%d\n",
-    //     dst_width, dst_height, dst_box_x, dst_box_y, dst_box_width, dst_box_height);
-    // printf("channel=%d x_ratio=%f y_ratio=%f\n", channel, x_ratio, y_ratio);
 
     // 从原图指定区域取数据，双线性缩放到目标指定区域
     for (int dst_y = dst_box_y; dst_y < dst_box_y + dst_box_height; dst_y++) {
@@ -340,25 +47,19 @@ static int crop_and_scale_image_c(int channel, unsigned char *src, int src_width
                 index4 = index2 - 1 * channel;
             }
 
-            // printf("dst_x=%d dst_y=%d dst_x_offset=%d dst_y_offset=%d src_x=%d src_y=%d x_diff=%f y_diff=%f src index=%d %d %d %d\n",
-            //     dst_x, dst_y, dst_x_offset, dst_y_offset,
-            //     src_x, src_y, x_diff, y_diff,
-            //     index1, index2, index3, index4);
-
             for (int c = 0; c < channel; c++) {
-                unsigned char A = src[index1+c];
-                unsigned char B = src[index3+c];
-                unsigned char C = src[index2+c];
-                unsigned char D = src[index4+c];
+                unsigned char A = src[index1 + c];
+                unsigned char B = src[index3 + c];
+                unsigned char C = src[index2 + c];
+                unsigned char D = src[index4 + c];
 
                 unsigned char pixel = (unsigned char)(
                     A * (1 - x_diff) * (1 - y_diff) +
                     B * x_diff * (1 - y_diff) +
                     C * y_diff * (1 - x_diff) +
-                    D * x_diff * y_diff
-                );
+                    D * x_diff * y_diff);
 
-                dst[(dst_y * dst_width  + dst_x) * channel + c] = pixel;
+                dst[(dst_y * dst_width + dst_x) * channel + c] = pixel;
             }
         }
     }
@@ -367,10 +68,9 @@ static int crop_and_scale_image_c(int channel, unsigned char *src, int src_width
 }
 
 static int crop_and_scale_image_yuv420sp(unsigned char *src, int src_width, int src_height,
-                                    int crop_x, int crop_y, int crop_width, int crop_height,
-                                    unsigned char *dst, int dst_width, int dst_height,
-                                    int dst_box_x, int dst_box_y, int dst_box_width, int dst_box_height) {
-
+                                         int crop_x, int crop_y, int crop_width, int crop_height,
+                                         unsigned char *dst, int dst_width, int dst_height,
+                                         int dst_box_x, int dst_box_y, int dst_box_width, int dst_box_height) {
     unsigned char* src_y = src;
     unsigned char* src_uv = src + src_width * src_height;
 
@@ -379,7 +79,7 @@ static int crop_and_scale_image_yuv420sp(unsigned char *src, int src_width, int 
 
     crop_and_scale_image_c(1, src_y, src_width, src_height, crop_x, crop_y, crop_width, crop_height,
         dst_y, dst_width, dst_height, dst_box_x, dst_box_y, dst_box_width, dst_box_height);
-    
+
     crop_and_scale_image_c(2, src_uv, src_width / 2, src_height / 2, crop_x / 2, crop_y / 2, crop_width / 2, crop_height / 2,
         dst_uv, dst_width / 2, dst_height / 2, dst_box_x, dst_box_y, dst_box_width, dst_box_height);
 
@@ -387,14 +87,7 @@ static int crop_and_scale_image_yuv420sp(unsigned char *src, int src_width, int 
 }
 
 static int convert_image_cpu(image_buffer_t *src, image_buffer_t *dst, image_rect_t *src_box, image_rect_t *dst_box, char color) {
-    int ret;
-    if (dst->virt_addr == NULL) {
-        return -1;
-    }
-    if (src->virt_addr == NULL) {
-        return -1;
-    }
-    if (src->format != dst->format) {
+    if (dst->virt_addr == NULL || src->virt_addr == NULL || src->format != dst->format) {
         return -1;
     }
 
@@ -408,6 +101,7 @@ static int convert_image_cpu(image_buffer_t *src, image_buffer_t *dst, image_rec
         src_box_w = src_box->right - src_box->left + 1;
         src_box_h = src_box->bottom - src_box->top + 1;
     }
+
     int dst_box_x = 0;
     int dst_box_y = 0;
     int dst_box_w = dst->width;
@@ -425,7 +119,6 @@ static int convert_image_cpu(image_buffer_t *src, image_buffer_t *dst, image_rec
         memset(dst->virt_addr, color, dst_size);
     }
 
-    int need_release_dst_buffer = 0;
     int reti = 0;
     if (src->format == IMAGE_FORMAT_RGB888) {
         reti = crop_and_scale_image_c(3, src->virt_addr, src->width, src->height,
@@ -450,17 +143,17 @@ static int convert_image_cpu(image_buffer_t *src, image_buffer_t *dst, image_rec
     } else {
         printf("no support format %d\n", src->format);
     }
+
     if (reti != 0) {
         printf("convert_image_cpu fail %d\n", reti);
         return -1;
     }
-    printf("finish\n");
+
     return 0;
 }
 
 static int get_rga_fmt(image_format_t fmt) {
-    switch (fmt)
-    {
+    switch (fmt) {
     case IMAGE_FORMAT_RGB888:
         return RK_FORMAT_RGB_888;
     case IMAGE_FORMAT_RGBA8888:
@@ -474,17 +167,16 @@ static int get_rga_fmt(image_format_t fmt) {
     }
 }
 
-int get_image_size(image_buffer_t* image)
-{
+int get_image_size(image_buffer_t* image) {
     if (image == NULL) {
         return 0;
     }
-    switch (image->format)
-    {
+
+    switch (image->format) {
     case IMAGE_FORMAT_GRAY8:
         return image->width * image->height;
     case IMAGE_FORMAT_RGB888:
-        return image->width * image->height * 3;    
+        return image->width * image->height * 3;
     case IMAGE_FORMAT_RGBA8888:
         return image->width * image->height * 4;
     case IMAGE_FORMAT_YUV420SP_NV12:
@@ -493,10 +185,11 @@ int get_image_size(image_buffer_t* image)
     default:
         break;
     }
+
+    return 0;
 }
 
-static int convert_image_rga(image_buffer_t* src_img, image_buffer_t* dst_img, image_rect_t* src_box, image_rect_t* dst_box, char color)
-{
+static int convert_image_rga(image_buffer_t* src_img, image_buffer_t* dst_img, image_rect_t* src_box, image_rect_t* dst_box, char color) {
     int ret = 0;
 
     int srcWidth = src_img->width;
@@ -514,25 +207,14 @@ static int convert_image_rga(image_buffer_t* src_img, image_buffer_t* dst_img, i
     int dstFmt = get_rga_fmt(dst_img->format);
 
     int rotate = 0;
-
     int use_handle = 0;
 #if defined(LIBRGA_IM2D_HANDLE)
     use_handle = 1;
 #endif
 
-    // printf("src width=%d height=%d fmt=0x%x virAddr=0x%p fd=%d\n",
-    //     srcWidth, srcHeight, srcFmt, src, src_fd);
-    // printf("dst width=%d height=%d fmt=0x%x virAddr=0x%p fd=%d\n",
-    //     dstWidth, dstHeight, dstFmt, dst, dst_fd);
-    // printf("rotate=%d\n", rotate);
-
-    int usage = 0;
+    int usage = rotate;
     IM_STATUS ret_rga = IM_STATUS_NOERROR;
 
-    // set rga usage
-    usage |= rotate;
-
-    // set rga rect
     im_rect srect;
     im_rect drect;
     im_rect prect;
@@ -631,13 +313,11 @@ static int convert_image_rga(image_buffer_t* src_img, image_buffer_t* dst_img, i
     if (drect.width != dstWidth || drect.height != dstHeight) {
         im_rect dst_whole_rect = {0, 0, dstWidth, dstHeight};
         int imcolor;
-        char* p_imcolor = &imcolor;
+        char* p_imcolor = (char*)&imcolor;
         p_imcolor[0] = color;
         p_imcolor[1] = color;
         p_imcolor[2] = color;
         p_imcolor[3] = color;
-        printf("fill dst image (x y w h)=(%d %d %d %d) with color=0x%x\n",
-            dst_whole_rect.x, dst_whole_rect.y, dst_whole_rect.width, dst_whole_rect.height, imcolor);
         ret_rga = imfill(rga_buf_dst, dst_whole_rect, imcolor);
         if (ret_rga <= 0) {
             if (dst != NULL) {
@@ -661,44 +341,29 @@ err:
     if (rga_handle_src > 0) {
         releasebuffer_handle(rga_handle_src);
     }
-
     if (rga_handle_dst > 0) {
         releasebuffer_handle(rga_handle_dst);
     }
 
-    // printf("finish\n");
     return ret;
 }
 
-int convert_image(image_buffer_t* src_img, image_buffer_t* dst_img, image_rect_t* src_box, image_rect_t* dst_box, char color)
-{
+int convert_image(image_buffer_t* src_img, image_buffer_t* dst_img, image_rect_t* src_box, image_rect_t* dst_box, char color) {
     int ret;
-#if defined(DISABLE_RGA) 
-    printf("convert image use cpu\n");
-    ret = convert_image_cpu(src_img, dst_img, src_box, dst_box, color);
-#else
-
-#if defined(RV1106_1103) 
-    if(src_img->width % 4 == 0 && dst_img->width % 4 == 0) {
-#else
-    if(src_img->width % 16 == 0 && dst_img->width % 16 == 0) {
-#endif
+    if (src_img->width % 16 == 0 && dst_img->width % 16 == 0) {
         ret = convert_image_rga(src_img, dst_img, src_box, dst_box, color);
         if (ret != 0) {
             printf("try convert image use cpu\n");
             ret = convert_image_cpu(src_img, dst_img, src_box, dst_box, color);
         }
     } else {
-        printf("src width is not 4/16-aligned, convert image use cpu\n");
+        printf("src width is not 16-aligned, convert image use cpu\n");
         ret = convert_image_cpu(src_img, dst_img, src_box, dst_box, color);
     }
-#endif
     return ret;
 }
 
-int convert_image_with_letterbox(image_buffer_t* src_image, image_buffer_t* dst_image, letterbox_t* letterbox, char color)
-{
-    int ret = 0;
+int convert_image_with_letterbox(image_buffer_t* src_image, image_buffer_t* dst_image, letterbox_t* letterbox, char color) {
     int allow_slight_change = 1;
     int src_w = src_image->width;
     int src_h = src_image->height;
@@ -710,9 +375,9 @@ int convert_image_with_letterbox(image_buffer_t* src_image, image_buffer_t* dst_
     int padding_w = 0;
     int padding_h = 0;
 
-    int _left_offset = 0;
-    int _top_offset = 0;
-    float scale = 1.0;
+    int left_offset = 0;
+    int top_offset = 0;
+    float scale = 1.0f;
 
     image_rect_t src_box;
     src_box.left = 0;
@@ -726,14 +391,14 @@ int convert_image_with_letterbox(image_buffer_t* src_image, image_buffer_t* dst_
     dst_box.right = dst_image->width - 1;
     dst_box.bottom = dst_image->height - 1;
 
-    float _scale_w = (float)dst_w / src_w;
-    float _scale_h = (float)dst_h / src_h;
-    if(_scale_w < _scale_h) {
-        scale = _scale_w;
-        resize_h = (int) src_h*scale;
+    float scale_w = (float)dst_w / src_w;
+    float scale_h = (float)dst_h / src_h;
+    if (scale_w < scale_h) {
+        scale = scale_w;
+        resize_h = (int)(src_h * scale);
     } else {
-        scale = _scale_h;
-        resize_w = (int) src_w*scale;
+        scale = scale_h;
+        resize_w = (int)(src_w * scale);
     }
     // slight change image size for align
     if (allow_slight_change == 1 && (resize_w % 4 != 0)) {
@@ -746,7 +411,7 @@ int convert_image_with_letterbox(image_buffer_t* src_image, image_buffer_t* dst_
     padding_h = dst_h - resize_h;
     padding_w = dst_w - resize_w;
     // center
-    if (_scale_w < _scale_h) {
+    if (scale_w < scale_h) {
         dst_box.top = padding_h / 2;
         if (dst_box.top % 2 != 0) {
             dst_box.top -= dst_box.top % 2;
@@ -755,7 +420,7 @@ int convert_image_with_letterbox(image_buffer_t* src_image, image_buffer_t* dst_
             }
         }
         dst_box.bottom = dst_box.top + resize_h - 1;
-        _top_offset = dst_box.top;
+        top_offset = dst_box.top;
     } else {
         dst_box.left = padding_w / 2;
         if (dst_box.left % 2 != 0) {
@@ -765,17 +430,14 @@ int convert_image_with_letterbox(image_buffer_t* src_image, image_buffer_t* dst_
             }
         }
         dst_box.right = dst_box.left + resize_w - 1;
-        _left_offset = dst_box.left;
+        left_offset = dst_box.left;
     }
-    printf("scale=%f dst_box=(%d %d %d %d) allow_slight_change=%d _left_offset=%d _top_offset=%d padding_w=%d padding_h=%d\n",
-        scale, dst_box.left, dst_box.top, dst_box.right, dst_box.bottom, allow_slight_change,
-        _left_offset, _top_offset, padding_w, padding_h);
 
-    //set offset and scale
-    if(letterbox != NULL){
+    // set offset and scale
+    if (letterbox != NULL) {
         letterbox->scale = scale;
-        letterbox->x_pad = _left_offset;
-        letterbox->y_pad = _top_offset;
+        letterbox->x_pad = left_offset;
+        letterbox->y_pad = top_offset;
     }
     // alloc memory buffer for dst image,
     // remember to free
@@ -787,6 +449,6 @@ int convert_image_with_letterbox(image_buffer_t* src_image, image_buffer_t* dst_
             return -1;
         }
     }
-    ret = convert_image(src_image, dst_image, &src_box, &dst_box, color);
-    return ret;
+
+    return convert_image(src_image, dst_image, &src_box, &dst_box, color);
 }

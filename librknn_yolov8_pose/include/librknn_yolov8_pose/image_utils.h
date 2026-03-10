@@ -1,11 +1,11 @@
-#ifndef _RKNN_MODEL_ZOO_IMAGE_UTILS_H_
-#define _RKNN_MODEL_ZOO_IMAGE_UTILS_H_
+#ifndef RKNN_YOLOV8_POSE_IMAGE_UTILS_H
+#define RKNN_YOLOV8_POSE_IMAGE_UTILS_H
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-#include "common.h"
+#include "librknn_yolov8_pose/common.h"
 
 /**
  * @brief LetterBox
@@ -16,24 +16,6 @@ typedef struct {
     int y_pad;
     float scale;
 } letterbox_t;
-
-/**
- * @brief Read image file (support png/jpeg/bmp)
- * 
- * @param path [in] Image path
- * @param image [out] Read image
- * @return int 0: success; -1: error
- */
-int read_image(const char* path, image_buffer_t* image);
-
-/**
- * @brief Write image file (support jpg/png)
- * 
- * @param path [in] Image path
- * @param image [in] Image for write (only support IMAGE_FORMAT_RGB888)
- * @return int 0: success; -1: error
- */
-int write_image(const char* path, const image_buffer_t* image);
 
 /**
  * @brief Convert image for resize and pixel format change
@@ -70,4 +52,4 @@ int get_image_size(image_buffer_t* image);
 }  // extern "C"
 #endif
 
-#endif // _RKNN_MODEL_ZOO_IMAGE_UTILS_H_
+#endif // RKNN_YOLOV8_POSE_IMAGE_UTILS_H
