@@ -26,7 +26,7 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             "fps",
-            default_value="15",
+            default_value="0",
             description="Frame rate for the YOLO node",
         ),
         DeclareLaunchArgument(
