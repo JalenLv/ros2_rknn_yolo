@@ -15,7 +15,7 @@
   <depend>ament_index_cpp</depend>
   <depend>rclcpp</depend>
   <depend>sensor_msgs</depend>
-  <depend>bboxes_kpoints_msgs</depend>
+  <depend>yolo_msgs</depend>
   <depend>cv_bridge</depend>
   <depend>message_filters</depend>
   <depend>librknn_yolov8_pose</depend>

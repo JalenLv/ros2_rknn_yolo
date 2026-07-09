@@ -9,7 +9,7 @@ endif()
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
-find_package(bboxes_kpoints_msgs REQUIRED)
+find_package(yolo_msgs REQUIRED)
 find_package(librknn_yolov8_pose REQUIRED)
 find_package(ament_index_cpp REQUIRED)
 find_package(cv_bridge REQUIRED)
@@ -26,7 +26,7 @@ ament_target_dependencies(yolo_node
   ament_index_cpp
   rclcpp
   sensor_msgs
-  bboxes_kpoints_msgs
+  yolo_msgs
   cv_bridge
   message_filters
 )
@@ -44,7 +44,7 @@ target_compile_features(yolo_visualizer_pose PUBLIC c_std_99 cxx_std_17)
 ament_target_dependencies(yolo_visualizer_pose
   rclcpp
   sensor_msgs
-  bboxes_kpoints_msgs
+  yolo_msgs
   cv_bridge
   message_filters
 )

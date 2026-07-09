@@ -8,7 +8,7 @@ endif()
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
-find_package(bboxes_kpoints_msgs REQUIRED)
+find_package(yolo_msgs REQUIRED)
 find_package(cv_bridge REQUIRED)
 find_package(OpenCV REQUIRED)
 
@@ -36,7 +36,7 @@ add_library(rknn_yolov8_pose SHARED
 ament_target_dependencies(rknn_yolov8_pose
   rclcpp
   sensor_msgs
-  bboxes_kpoints_msgs
+  yolo_msgs
   cv_bridge
 )
 
