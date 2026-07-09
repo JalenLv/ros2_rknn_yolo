@@ -4,8 +4,8 @@
   <name>librknn_yolov8_pose</name>
   <version>0.0.0</version>
   <description>RKNN accelerated YOLOV8 pose backend</description>
-  <maintainer email="jalenlv543@qq.com">QIMING LYU</maintainer>
-  <license>PRIVATE</license>
+  <maintainer email="jalenlv543@qq.com">Jalen Lv</maintainer>
+  <license>MIT</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
   <depend>rclcpp</depend>
