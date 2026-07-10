@@ -84,10 +84,8 @@ YoloVisualizerPose::YoloVisualizerPose() : Node("yolo_visualizer_pose") {
     // Use rmw_qos_profile_sensor_data for image to match best effort if needed, 
     // but TimeSynchronizer requires exact matching policies usually. 
     // However, message_filters subscribers take a QoS.
-    this->declare_parameter("image_topic", "/image_raw");
-    image_sub_.subscribe(this, this->get_parameter("image_topic").as_string(), rmw_qos_profile_sensor_data);
-    this->declare_parameter("bbox_kpoints_topic", "/bounding_boxes_keypoints");
-    detections_sub_.subscribe(this, this->get_parameter("bbox_kpoints_topic").as_string(), rmw_qos_profile_default);
+    image_sub_.subscribe(this, "image_raw", rmw_qos_profile_sensor_data);
+    detections_sub_.subscribe(this, "detections", rmw_qos_profile_default);
 
     // Synchronize topics
     // Queue size 10

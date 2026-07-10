@@ -16,8 +16,7 @@ YoloNode::YoloNode(const std::string &node_name) : Node(node_name) {
 
     // Subscribe to the camera image topic
     // Incoming images call `image_callback`
-    this->declare_parameter("image_topic", "/image_raw");
-    std::string image_topic = this->get_parameter("image_topic").as_string();
+    std::string image_topic("image_raw");
     image_subscriber = this->create_subscription<sensor_msgs::msg::Image>(
         image_topic,
         rclcpp::SensorDataQoS(),
@@ -25,8 +24,7 @@ YoloNode::YoloNode(const std::string &node_name) : Node(node_name) {
     );
 
     // Publisher for YOLO detections
-    this->declare_parameter("bbox_kpoints_topic", "/bounding_boxes_keypoints");
-    std::string detections_topic = this->get_parameter("bbox_kpoints_topic").as_string();
+    std::string detections_topic("detections");
     detections_publisher = this->create_publisher<yolo_msgs::msg::Detections>(
         detections_topic,
         rclcpp::QoS(rclcpp::KeepLast(10)).reliable()
@@ -35,7 +33,7 @@ YoloNode::YoloNode(const std::string &node_name) : Node(node_name) {
     // Maximum inference rate
     // Frames that arrive while inference is busy or rate-limited
     // replace the pending frame so control sees the latest image.
-    this->declare_parameter("fps", 15);
+    this->declare_parameter("fps", 0);
     int fps = this->get_parameter("fps").as_int();
     if (fps > 0) {
         min_inference_interval_ = std::chrono::duration_cast<
