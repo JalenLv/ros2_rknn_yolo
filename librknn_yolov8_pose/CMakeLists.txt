@@ -8,6 +8,7 @@ endif()
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
+find_package(std_msgs REQUIRED)
 find_package(yolo_msgs REQUIRED)
 find_package(cv_bridge REQUIRED)
 find_package(OpenCV REQUIRED)
@@ -36,6 +37,7 @@ add_library(rknn_yolov8_pose SHARED
 ament_target_dependencies(rknn_yolov8_pose
   rclcpp
   sensor_msgs
+  std_msgs
   yolo_msgs
   cv_bridge
 )
@@ -93,4 +95,5 @@ install(EXPORT export_rknn_yolov8_pose
 
 ament_export_targets(export_rknn_yolov8_pose HAS_LIBRARY_TARGET)
 ament_export_include_directories(include)
+ament_export_dependencies(rclcpp sensor_msgs std_msgs yolo_msgs cv_bridge)
 ament_package()

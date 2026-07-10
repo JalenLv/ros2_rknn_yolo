@@ -22,6 +22,9 @@ uint8 RIGHT_KNEE = 14
 uint8 LEFT_ANKLE = 15
 uint8 RIGHT_ANKLE = 16
 
+# Number of Keypoints
+uint8 NUM_KEYPOINTS = 17
+
 # Actual data
 uint8 id
 float32 x

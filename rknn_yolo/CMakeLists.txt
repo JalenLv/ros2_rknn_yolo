@@ -7,6 +7,7 @@ endif()
 
 # find dependencies
 find_package(ament_cmake REQUIRED)
+find_package(builtin_interfaces REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(yolo_msgs REQUIRED)
@@ -24,11 +25,10 @@ target_compile_features(yolo_node PUBLIC c_std_99 cxx_std_17)
 
 ament_target_dependencies(yolo_node
   ament_index_cpp
+  builtin_interfaces
   rclcpp
   sensor_msgs
   yolo_msgs
-  cv_bridge
-  message_filters
 )
 
 target_link_libraries(yolo_node

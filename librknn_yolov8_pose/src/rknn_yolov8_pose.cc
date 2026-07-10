@@ -1,5 +1,6 @@
 #include <librknn_yolov8_pose/rknn_yolov8_pose.h>
 
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <new>
@@ -122,7 +123,7 @@ void YoloV8Pose::release_model() {
 
 int YoloV8Pose::infer(
     const sensor_msgs::msg::Image::ConstSharedPtr& img,
-    bboxes_kpoints_msgs::msg::BoundingBoxesKeypoints::SharedPtr bboxes) {
+    yolo_msgs::msg::Detections::SharedPtr detections) {
     cv_bridge::CvImagePtr cv_ptr;
     try {
         cv_ptr = cv_bridge::toCvCopy(img, sensor_msgs::image_encodings::RGB8);
@@ -205,42 +206,43 @@ int YoloV8Pose::infer(
         return -1;
     }
 
-    populate_results(mat, img->header, bboxes);
+    populate_results(mat, img->header, detections);
     return 0;
 }
 
 void YoloV8Pose::populate_results(
     const cv::Mat& mat,
     const std_msgs::msg::Header& header,
-    bboxes_kpoints_msgs::msg::BoundingBoxesKeypoints::SharedPtr bboxes) {
-    bboxes->header = header;
-    bboxes->bounding_boxes.clear();
-    bboxes->bounding_boxes.reserve(od_results_.count);
+    yolo_msgs::msg::Detections::SharedPtr detections) {
+    detections->image_meta.header = header;
+    detections->image_meta.width = static_cast<uint16_t>(mat.cols);
+    detections->image_meta.height = static_cast<uint16_t>(mat.rows);
 
+    detections->detections.clear();
+    detections->detections.reserve(od_results_.count);
     for (int i = 0; i < od_results_.count; ++i) {
         const object_detect_result& det_result = od_results_.results[i];
-        bboxes_kpoints_msgs::msg::BoundingBoxKeypoints bbox;
-        bbox.probability = det_result.prop;
-        bbox.xmin = det_result.box.left;
-        bbox.ymin = det_result.box.top;
-        bbox.xmax = det_result.box.right;
-        bbox.ymax = det_result.box.bottom;
-        bbox.id = 0;
-        bbox.img_width = mat.cols;
-        bbox.img_height = mat.rows;
-        bbox.class_id_int = det_result.cls_id;
-        bbox.class_id = std::string(coco_cls_to_name(bbox.class_id_int));
+        yolo_msgs::msg::Detection detection;
+        detection.class_id = static_cast<uint16_t>(det_result.cls_id);
+        detection.class_name = std::string(coco_cls_to_name(det_result.cls_id));
+        detection.confidence = det_result.prop;
+        detection.id = yolo_msgs::msg::Detection::UNCHECKED;
+        detection.bbox.xmin = static_cast<uint16_t>(det_result.box.left);
+        detection.bbox.ymin = static_cast<uint16_t>(det_result.box.top);
+        detection.bbox.xmax = static_cast<uint16_t>(det_result.box.right);
+        detection.bbox.ymax = static_cast<uint16_t>(det_result.box.bottom);
 
-        bbox.keypoints.reserve(NUM_KEYPOINTS);
+        detection.keypoints.reserve(NUM_KEYPOINTS);
         for (int j = 0; j < NUM_KEYPOINTS; ++j) {
-            bboxes_kpoints_msgs::msg::Keypoint keypoint;
+            yolo_msgs::msg::Keypoint keypoint;
+            keypoint.id = static_cast<uint8_t>(j);
             keypoint.x = det_result.keypoints[j][0];
             keypoint.y = det_result.keypoints[j][1];
-            keypoint.score = det_result.keypoints[j][2];
-            bbox.keypoints.push_back(keypoint);
+            keypoint.confidence = det_result.keypoints[j][2];
+            detection.keypoints.push_back(keypoint);
         }
 
-        bboxes->bounding_boxes.push_back(std::move(bbox));
+        detections->detections.push_back(std::move(detection));
     }
 }
 

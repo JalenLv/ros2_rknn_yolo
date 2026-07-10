@@ -8,15 +8,15 @@
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/image.hpp>
 #include <std_msgs/msg/header.hpp>
-#include <bboxes_kpoints_msgs/msg/bounding_boxes_keypoints.hpp>
-#include <bboxes_kpoints_msgs/msg/bounding_box_keypoints.hpp>
+#include <yolo_msgs/msg/detections.hpp>
+#include <yolo_msgs/msg/keypoint.hpp>
 
 #include "rknn_api.h"
 #include "librknn_yolov8_pose/postprocess.h"
 
 namespace rknn_yolo {
 
-static constexpr int NUM_KEYPOINTS = 17;
+static constexpr int NUM_KEYPOINTS = yolo_msgs::msg::Keypoint::NUM_KEYPOINTS;
 
 class YoloV8Pose {
 public:
@@ -27,14 +27,14 @@ public:
     YoloV8Pose& operator=(const YoloV8Pose&) = delete;
 
     /**
-     * @brief Infer bounding boxes with keypoints given an image message
+     * @brief Infer YOLO detections given an image message
      * @param img Input image message
-     * @param bboxes Output bounding boxes with keypoints
+     * @param detections Output detections
      * @return 0 on success, negative on error
      */
     int infer(
         const sensor_msgs::msg::Image::ConstSharedPtr& img,
-        bboxes_kpoints_msgs::msg::BoundingBoxesKeypoints::SharedPtr bboxes);
+        yolo_msgs::msg::Detections::SharedPtr detections);
 
 private:
     rclcpp::Logger logger_;
@@ -57,7 +57,7 @@ private:
     void populate_results(
         const cv::Mat& mat,
         const std_msgs::msg::Header& header,
-        bboxes_kpoints_msgs::msg::BoundingBoxesKeypoints::SharedPtr bboxes);
+        yolo_msgs::msg::Detections::SharedPtr detections);
 };
 
 } // namespace rknn_yolo

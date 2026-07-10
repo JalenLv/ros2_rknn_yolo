@@ -24,11 +24,11 @@ YoloNode::YoloNode(const std::string &node_name) : Node(node_name) {
         std::bind(&YoloNode::image_callback, this, std::placeholders::_1)
     );
 
-    // Publisher for bounding boxes with keypoints
+    // Publisher for YOLO detections
     this->declare_parameter("bbox_kpoints_topic", "/bounding_boxes_keypoints");
-    std::string bbox_kpoints_topic = this->get_parameter("bbox_kpoints_topic").as_string();
-    bbox_publisher = this->create_publisher<bboxes_kpoints_msgs::msg::BoundingBoxesKeypoints>(
-        bbox_kpoints_topic,
+    std::string detections_topic = this->get_parameter("bbox_kpoints_topic").as_string();
+    detections_publisher = this->create_publisher<yolo_msgs::msg::Detections>(
+        detections_topic,
         rclcpp::QoS(rclcpp::KeepLast(10)).reliable()
     );
 
@@ -171,14 +171,15 @@ void YoloNode::inference_loop() {
         } // Unlock
 
         // Create output message
-        auto bboxes_msg = std::make_shared<
-            bboxes_kpoints_msgs::msg::BoundingBoxesKeypoints>();
+        auto detections_msg = std::make_shared<yolo_msgs::msg::Detections>();
 
         // Run inference
-        if (yolo->infer(job, bboxes_msg) != 0) {
+        if (yolo->infer(job, detections_msg) != 0) {
             RCLCPP_ERROR(this->get_logger(), "Inference failed");
         } else {
-            bbox_publisher->publish(*bboxes_msg);
+            detections_msg->header.stamp = this->now();
+            detections_msg->header.frame_id = job->header.frame_id;
+            detections_publisher->publish(*detections_msg);
             RCLCPP_DEBUG_THROTTLE(
                 this->get_logger(),
                 *this->get_clock(),

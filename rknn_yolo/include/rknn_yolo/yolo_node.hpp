@@ -12,14 +12,14 @@
 #include <builtin_interfaces/msg/time.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/image.hpp>
-#include <bboxes_kpoints_msgs/msg/bounding_boxes_keypoints.hpp>
+#include <yolo_msgs/msg/detections.hpp>
 #include <librknn_yolov8_pose/rknn_yolov8_pose.h>
 
 /**
  * @brief ROS 2 node wrapper for RKNN YOLO pose inference.
  *
  * This node subscribes to images, runs latest-frame inference, and publishes
- * bounding boxes with keypoints.
+ * YOLO detections.
  */
 class YoloNode : public rclcpp::Node {
 public:
@@ -57,7 +57,7 @@ private:
         const builtin_interfaces::msg::Time &stamp) const;
 
     rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr image_subscriber;
-    rclcpp::Publisher<bboxes_kpoints_msgs::msg::BoundingBoxesKeypoints>::SharedPtr bbox_publisher;
+    rclcpp::Publisher<yolo_msgs::msg::Detections>::SharedPtr detections_publisher;
 
     // Pointer to the RKNN YOLOv8 pose inference object.
     std::unique_ptr<rknn_yolo::YoloV8Pose> yolo;

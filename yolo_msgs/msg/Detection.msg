@@ -1,11 +1,14 @@
 # Defines a YOLO detection result
 
+# Tracking ID used when no tracker has assigned an ID
+uint16 UNCHECKED=65535
+
 # Detected class and confidence
 uint16 class_id
 string class_name
 float32 confidence
 
-# ID for tracking
+# Tracking ID
 uint16 id
 
 # Bounding box
