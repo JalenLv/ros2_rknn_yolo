@@ -47,7 +47,8 @@ class LetterboxPreprocessor {
     LetterboxPreprocessor(LetterboxPreprocessor &&) noexcept;
     LetterboxPreprocessor &operator=(LetterboxPreprocessor &&) noexcept;
 
-    int init(int destination_width, int destination_height);
+    int init(int destination_width, int destination_height,
+             bool use_rga = true);
     int process(const SrcView &source, Letterbox &letterbox);
 
     /**

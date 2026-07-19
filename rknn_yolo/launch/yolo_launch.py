@@ -20,6 +20,11 @@ def generate_launch_description():
             description="Frame rate for the YOLO node",
         ),
         DeclareLaunchArgument(
+            "use_rga",
+            default_value="true",
+            description="Use RGA hardware for preprocessing; false = plain CPU (OpenCV)",
+        ),
+        DeclareLaunchArgument(
             "model_path",
             default_value=model_path,
             description="Path to .rknn model",
@@ -34,6 +39,7 @@ def generate_launch_description():
             executable="yolo_node",
             parameters=[
                 {"fps": LaunchConfiguration("fps")},
+                {"use_rga": LaunchConfiguration("use_rga")},
                 {"model_path": LaunchConfiguration("model_path")},
                 {"label_path": LaunchConfiguration("label_path")},
             ],

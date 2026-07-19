@@ -158,7 +158,7 @@ struct LetterboxPreprocessor::Impl {
 
     std::uint8_t *destination() const { return destination_; }
 
-    int init(int destination_width, int destination_height) {
+    int init(int destination_width, int destination_height, bool use_rga) {
         // Resets previous state
         release_destination();
 
@@ -192,6 +192,15 @@ struct LetterboxPreprocessor::Impl {
         destination_height_ = destination_height;
         destination_size_ = width * height * 3U;
 
+        if (!use_rga) {
+            if (!allocate_fallback_storage()) {
+                return -1;
+            }
+            rga_disabled_ = true;
+            initialized_ = true;
+            return 0;
+        }
+
         std::size_t allocation_size = 0U;
         DmaHeapAllocation allocation;
         if (page_round(destination_size_, allocation_size) &&
@@ -211,13 +220,9 @@ struct LetterboxPreprocessor::Impl {
         }
 
         if (destination_handle_ == 0U) {
-            try {
-                fallback_storage_.resize(destination_size_);
-            } catch (const std::bad_alloc &) {
-                release_destination_storage();
+            if (!allocate_fallback_storage()) {
                 return -1;
             }
-            destination_ = fallback_storage_.data();
 
             im_handle_param_t parameters{};
             parameters.width = static_cast<std::uint32_t>(destination_width_);
@@ -273,6 +278,17 @@ struct LetterboxPreprocessor::Impl {
     }
 
   private:
+    bool allocate_fallback_storage() {
+        try {
+            fallback_storage_.resize(destination_size_);
+        } catch (const std::bad_alloc &) {
+            release_destination_storage();
+            return false;
+        }
+        destination_ = fallback_storage_.data();
+        return true;
+    }
+
     void release_destination() {
         release_destination_handle();
         release_destination_storage();
@@ -580,10 +596,11 @@ LetterboxPreprocessor::LetterboxPreprocessor(
 LetterboxPreprocessor &
 LetterboxPreprocessor::operator=(LetterboxPreprocessor &&) noexcept = default;
 
-int LetterboxPreprocessor::init(int destination_width, int destination_height) {
+int LetterboxPreprocessor::init(int destination_width, int destination_height,
+                                bool use_rga) {
     return impl_ == nullptr
                ? -1
-               : impl_->init(destination_width, destination_height);
+               : impl_->init(destination_width, destination_height, use_rga);
 }
 
 std::uint8_t *LetterboxPreprocessor::destination() const {

@@ -13,7 +13,7 @@ namespace rknn_yolo {
 class YoloV8Pose {
   public:
     YoloV8Pose(const std::string &model_path, const std::string &label_path,
-               rclcpp::Logger logger);
+               rclcpp::Logger logger, bool use_rga = true);
     ~YoloV8Pose();
 
     YoloV8Pose(const YoloV8Pose &) = delete;

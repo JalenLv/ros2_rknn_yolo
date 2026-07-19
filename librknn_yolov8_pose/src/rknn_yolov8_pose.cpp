@@ -73,14 +73,14 @@ bool image_storage_is_valid(const sensor_msgs::msg::Image &image) {
 struct YoloV8Pose::Impl {
     // Constructor
     Impl(const std::string &model_path, const std::string &label_path,
-         rclcpp::Logger logger)
+         rclcpp::Logger logger, bool use_rga)
         : logger_(std::move(logger)) {
         try {
             // Loads class names for postprocessing
             load_labels(label_path);
             // Init RKNN context and model
             // Validates the complete inference pipeline
-            initialize_model(model_path);
+            initialize_model(model_path, use_rga);
         } catch (...) {
             destroy_context();
             throw;
@@ -225,7 +225,7 @@ struct YoloV8Pose::Impl {
         }
     }
 
-    void initialize_model(const std::string &model_path) {
+    void initialize_model(const std::string &model_path, bool use_rga) {
         // Creates the RKNN context
         // The resulting hanndle is stored in `rknn_ctx_`
         int ret = rknn_init(
@@ -300,9 +300,11 @@ struct YoloV8Pose::Impl {
         }
         // Init preprocessing
         // The preprocessor maintains a persistent model input buffer
-        if (preprocessor_.init(model_width_, model_height_) != 0) {
+        if (preprocessor_.init(model_width_, model_height_, use_rga) != 0) {
             fail("failed to initialize letterbox preprocessor");
         }
+        RCLCPP_INFO(logger_, "preprocessing: %s",
+                    use_rga ? "RGA hardware" : "CPU (OpenCV)");
 
         // Prepares the input descriptor
         inputs_.resize(io_num_.n_input);
@@ -547,9 +549,10 @@ struct YoloV8Pose::Impl {
 };
 
 YoloV8Pose::YoloV8Pose(const std::string &model_path,
-                       const std::string &label_path, rclcpp::Logger logger)
-    : impl_(std::make_unique<Impl>(model_path, label_path, std::move(logger))) {
-}
+                       const std::string &label_path, rclcpp::Logger logger,
+                       bool use_rga)
+    : impl_(std::make_unique<Impl>(model_path, label_path, std::move(logger),
+                                   use_rga)) {}
 
 YoloV8Pose::~YoloV8Pose() = default;
 
