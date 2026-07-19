@@ -289,7 +289,7 @@ struct YoloV8Pose::Impl {
         // determine the inference logic depends on the metadata
         validate_model();
 
-        // Allocates a persistent input buffer
+        // Computes the persistent model input buffer size
         const std::uint64_t input_size =
             static_cast<std::uint64_t>(model_width_) *
             static_cast<std::uint64_t>(model_height_) *
@@ -298,11 +298,9 @@ struct YoloV8Pose::Impl {
             input_size > std::numeric_limits<std::uint32_t>::max()) {
             fail("model input tensor is too large");
         }
-        input_buffer_.resize(static_cast<std::size_t>(input_size));
-
         // Init preprocessing
-        if (preprocessor_.init(input_buffer_.data(), model_width_,
-                               model_height_) != 0) {
+        // The preprocessor maintains a persistent model input buffer
+        if (preprocessor_.init(model_width_, model_height_) != 0) {
             fail("failed to initialize letterbox preprocessor");
         }
 
@@ -313,7 +311,7 @@ struct YoloV8Pose::Impl {
         inputs_[0].type = RKNN_TENSOR_UINT8;
         inputs_[0].fmt = RKNN_TENSOR_NHWC;
         inputs_[0].size = input_size;
-        inputs_[0].buf = input_buffer_.data();
+        inputs_[0].buf = preprocessor_.destination();
 
         // Prepares the output and postprocessing state
         outputs_.resize(io_num_.n_output);
@@ -542,7 +540,6 @@ struct YoloV8Pose::Impl {
     bool is_quantized_{false};
 
     std::vector<std::string> labels_;
-    std::vector<std::uint8_t> input_buffer_;
     LetterboxPreprocessor preprocessor_;
     std::unique_ptr<DetectionPostprocessor> postprocessor_;
     std::vector<rknn_input> inputs_;

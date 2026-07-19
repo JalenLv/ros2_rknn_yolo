@@ -33,6 +33,9 @@ struct Letterbox {
 /**
  * @brief Transforms an arbitrary ROS image into the model's fixed-size packed
  * RGB buffer while preserving aspect ratio (letterboxing).
+ *
+ * The preprocessor will attempt to use the RGA hardware accelerator if
+ * available, but will fall back to OpenCV if necessary.
  */
 class LetterboxPreprocessor {
   public:
@@ -44,9 +47,13 @@ class LetterboxPreprocessor {
     LetterboxPreprocessor(LetterboxPreprocessor &&) noexcept;
     LetterboxPreprocessor &operator=(LetterboxPreprocessor &&) noexcept;
 
-    int init(std::uint8_t *destination, int destination_width,
-             int destination_height);
+    int init(int destination_width, int destination_height);
     int process(const SrcView &source, Letterbox &letterbox);
+
+    /**
+     * @return the pointer to the persistent model input buffer.
+     */
+    std::uint8_t *destination() const;
 
   private:
     struct Impl;

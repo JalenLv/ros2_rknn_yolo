@@ -3,8 +3,15 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <fcntl.h>
 #include <limits>
+#include <linux/dma-heap.h>
+#include <new>
+#include <sys/ioctl.h>
+#include <sys/mman.h>
+#include <unistd.h>
 #include <utility>
+#include <vector>
 
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
@@ -16,6 +23,56 @@ namespace {
 
 constexpr std::uint8_t kPaddingValue = 114U;
 constexpr int kRequiredRgaStrideAlignment = 16;
+constexpr char kDma32HeapPath[] = "/dev/dma_heap/system-uncached-dma32";
+
+struct DmaHeapAllocation {
+    int fd{-1};
+    std::uint8_t *address{nullptr};
+    std::size_t size{0U};
+};
+
+bool page_round(std::size_t size, std::size_t &rounded_size) {
+    const long page_size_value = sysconf(_SC_PAGESIZE);
+    if (page_size_value <= 0) {
+        return false;
+    }
+
+    const auto page_size = static_cast<std::size_t>(page_size_value);
+    if (size > std::numeric_limits<std::size_t>::max() - (page_size - 1U)) {
+        return false;
+    }
+
+    rounded_size = ((size + page_size - 1U) / page_size) * page_size;
+    return true;
+}
+
+bool allocate_dma32(std::size_t size, DmaHeapAllocation &allocation) {
+    const int heap_fd = open(kDma32HeapPath, O_RDWR | O_CLOEXEC);
+    if (heap_fd < 0) {
+        return false;
+    }
+
+    dma_heap_allocation_data data{};
+    data.len = size;
+    data.fd_flags = O_RDWR | O_CLOEXEC;
+    const int result = ioctl(heap_fd, DMA_HEAP_IOCTL_ALLOC, &data);
+    close(heap_fd);
+    if (result < 0) {
+        return false;
+    }
+
+    void *const address = mmap(nullptr, size, PROT_READ | PROT_WRITE,
+                               MAP_SHARED, static_cast<int>(data.fd), 0);
+    if (address == MAP_FAILED) {
+        close(static_cast<int>(data.fd));
+        return false;
+    }
+
+    allocation.fd = static_cast<int>(data.fd);
+    allocation.address = static_cast<std::uint8_t *>(address);
+    allocation.size = size;
+    return true;
+}
 
 std::size_t bytes_per_pixel(PixelFormat format) {
     switch (format) {
@@ -97,14 +154,14 @@ struct LetterboxPreprocessor::Impl {
         bool has_padding{false};
     };
 
-    ~Impl() { release_destination_handle(); }
+    ~Impl() { release_destination(); }
 
-    int init(std::uint8_t *destination, int destination_width,
-             int destination_height) {
+    std::uint8_t *destination() const { return destination_; }
+
+    int init(int destination_width, int destination_height) {
         // Resets previous state
-        release_destination_handle();
+        release_destination();
 
-        destination_ = nullptr;
         destination_width_ = 0;
         destination_height_ = 0;
         destination_size_ = 0U;
@@ -117,9 +174,8 @@ struct LetterboxPreprocessor::Impl {
         cached_source_height_ = 0;
         converted_rgb_.release();
 
-        // Checks for a null destination pointer and non-positive dimensions
-        if (destination == nullptr || destination_width <= 0 ||
-            destination_height <= 0) {
+        // Checks for non-positive dimensions
+        if (destination_width <= 0 || destination_height <= 0) {
             return -1;
         }
 
@@ -131,20 +187,47 @@ struct LetterboxPreprocessor::Impl {
             return -1;
         }
 
-        // Stores the persistent destination
-        destination_ = destination;
+        // Stores the destination geometry
         destination_width_ = destination_width;
         destination_height_ = destination_height;
         destination_size_ = width * height * 3U;
-        // TODO: why mark it here?
-        initialized_ = true;
 
-        im_handle_param_t parameters{};
-        parameters.width = static_cast<std::uint32_t>(destination_width_);
-        parameters.height = static_cast<std::uint32_t>(destination_height_);
-        parameters.format = RK_FORMAT_RGB_888;
-        destination_handle_ =
-            importbuffer_virtualaddr(destination_, &parameters);
+        std::size_t allocation_size = 0U;
+        DmaHeapAllocation allocation;
+        if (page_round(destination_size_, allocation_size) &&
+            allocation_size <=
+                static_cast<std::size_t>(std::numeric_limits<int>::max()) &&
+            allocate_dma32(allocation_size, allocation)) {
+            destination_fd_ = allocation.fd;
+            destination_ = allocation.address;
+            destination_allocation_size_ = allocation.size;
+            owns_dma_destination_ = true;
+            destination_handle_ =
+                importbuffer_fd(destination_fd_,
+                                static_cast<int>(destination_allocation_size_));
+            if (destination_handle_ == 0U) {
+                release_destination_storage();
+            }
+        }
+
+        if (destination_handle_ == 0U) {
+            try {
+                fallback_storage_.resize(destination_size_);
+            } catch (const std::bad_alloc &) {
+                release_destination_storage();
+                return -1;
+            }
+            destination_ = fallback_storage_.data();
+
+            im_handle_param_t parameters{};
+            parameters.width = static_cast<std::uint32_t>(destination_width_);
+            parameters.height = static_cast<std::uint32_t>(destination_height_);
+            parameters.format = RK_FORMAT_RGB_888;
+            destination_handle_ =
+                importbuffer_virtualaddr(destination_, &parameters);
+        }
+
+        initialized_ = true;
         if (destination_handle_ == 0U) {
             disable_rga("could not import the model input buffer");
             return 0;
@@ -190,12 +273,34 @@ struct LetterboxPreprocessor::Impl {
     }
 
   private:
+    void release_destination() {
+        release_destination_handle();
+        release_destination_storage();
+    }
+
     void release_destination_handle() {
         if (destination_handle_ != 0U) {
             releasebuffer_handle(destination_handle_);
             destination_handle_ = 0U;
         }
         destination_buffer_ = {};
+    }
+
+    void release_destination_storage() {
+        if (owns_dma_destination_) {
+            if (destination_ != nullptr && destination_allocation_size_ != 0U) {
+                munmap(destination_, destination_allocation_size_);
+            }
+            if (destination_fd_ >= 0) {
+                close(destination_fd_);
+            }
+        }
+
+        destination_ = nullptr;
+        destination_fd_ = -1;
+        destination_allocation_size_ = 0U;
+        owns_dma_destination_ = false;
+        std::vector<std::uint8_t>().swap(fallback_storage_);
     }
 
     void report_fallback(const char *reason) {
@@ -336,9 +441,9 @@ struct LetterboxPreprocessor::Impl {
             if (status > IM_STATUS_FAILED) {
                 return;
             }
-            // Some RGA drivers reject fill operations while resize/convert
-            // still works, so a fill failure must not disable the RGA resize
-            // path.
+            // Color fill runs only on the RGA2-Enhance core, whose 32-bit IOMMU
+            // cannot address virtual-address buffers backed above 4 GB. Keep
+            // RGA resize/color conversion enabled when fill cannot be assigned.
             fill_with_memset_ = true;
             std::fprintf(stderr,
                          "LetterboxPreprocessor: RGA padding fill failed (%s); "
@@ -441,9 +546,13 @@ struct LetterboxPreprocessor::Impl {
     }
 
     std::uint8_t *destination_{nullptr};
+    int destination_fd_{-1};
     int destination_width_{0};
     int destination_height_{0};
     std::size_t destination_size_{0U};
+    std::size_t destination_allocation_size_{0U};
+    bool owns_dma_destination_{false};
+    std::vector<std::uint8_t> fallback_storage_;
     bool initialized_{false};
 
     rga_buffer_handle_t destination_handle_{0U};
@@ -471,11 +580,14 @@ LetterboxPreprocessor::LetterboxPreprocessor(
 LetterboxPreprocessor &
 LetterboxPreprocessor::operator=(LetterboxPreprocessor &&) noexcept = default;
 
-int LetterboxPreprocessor::init(std::uint8_t *destination,
-                                int destination_width, int destination_height) {
-    return impl_ == nullptr ? -1
-                            : impl_->init(destination, destination_width,
-                                          destination_height);
+int LetterboxPreprocessor::init(int destination_width, int destination_height) {
+    return impl_ == nullptr
+               ? -1
+               : impl_->init(destination_width, destination_height);
+}
+
+std::uint8_t *LetterboxPreprocessor::destination() const {
+    return impl_ == nullptr ? nullptr : impl_->destination();
 }
 
 int LetterboxPreprocessor::process(const SrcView &source,
