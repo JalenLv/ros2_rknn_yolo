@@ -8,56 +8,45 @@ endif()
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
-find_package(std_msgs REQUIRED)
 find_package(yolo_msgs REQUIRED)
 find_package(cv_bridge REQUIRED)
-find_package(OpenCV REQUIRED)
+find_package(OpenCV REQUIRED COMPONENTS core imgproc)
 
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/3rdparty)
-
-add_definitions(-DLIBRGA_IM2D_HANDLE)
-
-add_library(imageutils STATIC
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/image_utils.c
-)
-set_target_properties(imageutils PROPERTIES POSITION_INDEPENDENT_CODE ON)
-target_include_directories(imageutils PUBLIC
-  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-  $<BUILD_INTERFACE:${LIBRGA_INCLUDES}>
-)
-target_link_libraries(imageutils
-  ${LIBRGA}
-)
+set(LIBRKNNRT
+  "${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/rknpu2/Linux/aarch64/librknnrt.so")
+set(LIBRKNNRT_INCLUDES
+  "${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/rknpu2/include")
+set(LIBRGA
+  "${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/librga/Linux/aarch64/librga.so")
+set(LIBRGA_INCLUDES
+  "${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/librga/include")
 
 add_library(rknn_yolov8_pose SHARED
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/rknn_yolov8_pose.cc
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/postprocess.cc
+  src/rknn_yolov8_pose.cpp
+  src/letterbox_preprocessor.cpp
+  src/detection_postprocessor.cpp
 )
-
-ament_target_dependencies(rknn_yolov8_pose
-  rclcpp
-  sensor_msgs
-  std_msgs
-  yolo_msgs
-  cv_bridge
+target_compile_features(rknn_yolov8_pose PUBLIC cxx_std_17)
+target_include_directories(rknn_yolov8_pose
+  PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+  PRIVATE
+    ${LIBRKNNRT_INCLUDES}
+    ${LIBRGA_INCLUDES}
+    ${OpenCV_INCLUDE_DIRS}
 )
-
 target_link_libraries(rknn_yolov8_pose
-  imageutils
-  ${LIBRKNNRT}
-  dl
-  ${OpenCV_LIBS}
-)
-
-set(THREADS_PREFER_PTHREAD_FLAG ON)
-find_package(Threads REQUIRED)
-target_link_libraries(rknn_yolov8_pose Threads::Threads)
-
-target_include_directories(rknn_yolov8_pose PUBLIC
-  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-  $<INSTALL_INTERFACE:include>
-  $<BUILD_INTERFACE:${LIBRKNNRT_INCLUDES}>
-  $<BUILD_INTERFACE:${OpenCV_INCLUDE_DIRS}>
+  PUBLIC
+    rclcpp::rclcpp
+    ${sensor_msgs_TARGETS}
+    ${yolo_msgs_TARGETS}
+  PRIVATE
+    cv_bridge::cv_bridge
+    opencv_core
+    opencv_imgproc
+    ${LIBRKNNRT}
+    ${LIBRGA}
 )
 
 install(TARGETS rknn_yolov8_pose
@@ -65,13 +54,7 @@ install(TARGETS rknn_yolov8_pose
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin
-)
-
-install(TARGETS imageutils
-  EXPORT export_rknn_yolov8_pose
-  ARCHIVE DESTINATION lib
-  LIBRARY DESTINATION lib
-  RUNTIME DESTINATION bin
+  INCLUDES DESTINATION include
 )
 
 install(DIRECTORY include/
@@ -79,21 +62,15 @@ install(DIRECTORY include/
 )
 
 install(FILES
-  ${LIBRKNNRT_INCLUDES}/rknn_api.h
-  DESTINATION include/librknn_yolov8_pose
+  ${LIBRKNNRT}
+  ${LIBRGA}
+  DESTINATION lib
 )
 
 install(DIRECTORY model/
   DESTINATION share/${PROJECT_NAME}/model
 )
 
-install(EXPORT export_rknn_yolov8_pose
-  FILE rknn_yolov8_poseTargets.cmake
-  NAMESPACE rknn_yolov8_pose::
-  DESTINATION share/${PROJECT_NAME}/cmake
-)
-
 ament_export_targets(export_rknn_yolov8_pose HAS_LIBRARY_TARGET)
-ament_export_include_directories(include)
-ament_export_dependencies(rclcpp sensor_msgs std_msgs yolo_msgs cv_bridge)
+ament_export_dependencies(rclcpp sensor_msgs yolo_msgs)
 ament_package()

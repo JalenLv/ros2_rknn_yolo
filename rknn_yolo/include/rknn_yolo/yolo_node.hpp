@@ -13,7 +13,7 @@
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/image.hpp>
 #include <yolo_msgs/msg/detections.hpp>
-#include <librknn_yolov8_pose/rknn_yolov8_pose.h>
+#include <librknn_yolov8_pose/rknn_yolov8_pose.hpp>
 
 /**
  * @brief ROS 2 node wrapper for RKNN YOLO pose inference.
