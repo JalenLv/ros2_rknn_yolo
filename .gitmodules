@@ -1,3 +1,0 @@
-[submodule "bboxes_kpoints_msgs"]
-	path = bboxes_kpoints_msgs
-	url = https://github.com/JalenLv/bboxes_kpoints_msgs.git

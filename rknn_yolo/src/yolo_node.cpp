@@ -10,32 +10,33 @@ YoloNode::YoloNode(const std::string &node_name) : Node(node_name) {
     std::string share_dir = ament_index_cpp::get_package_share_directory("librknn_yolov8_pose");
     this->declare_parameter("model_path", share_dir + "/model/yolov8_pose.rknn");
     this->declare_parameter("label_path", share_dir + "/model/yolov8_pose_labels_list.txt");
+    this->declare_parameter("use_rga", true);
     std::string model_path = this->get_parameter("model_path").as_string();
     std::string label_path = this->get_parameter("label_path").as_string();
-    yolo = std::make_unique<rknn_yolo::YoloV8Pose>(model_path, label_path, this->get_logger());
+    const bool use_rga = this->get_parameter("use_rga").as_bool();
+    yolo = std::make_unique<rknn_yolo::YoloV8Pose>(
+        model_path, label_path, this->get_logger(), use_rga);
 
     // Subscribe to the camera image topic
     // Incoming images call `image_callback`
-    this->declare_parameter("image_topic", "/image_raw");
-    std::string image_topic = this->get_parameter("image_topic").as_string();
+    std::string image_topic("image_raw");
     image_subscriber = this->create_subscription<sensor_msgs::msg::Image>(
         image_topic,
         rclcpp::SensorDataQoS(),
         std::bind(&YoloNode::image_callback, this, std::placeholders::_1)
     );
 
-    // Publisher for bounding boxes with keypoints
-    this->declare_parameter("bbox_kpoints_topic", "/bounding_boxes_keypoints");
-    std::string bbox_kpoints_topic = this->get_parameter("bbox_kpoints_topic").as_string();
-    bbox_publisher = this->create_publisher<bboxes_kpoints_msgs::msg::BoundingBoxesKeypoints>(
-        bbox_kpoints_topic,
+    // Publisher for YOLO detections
+    std::string detections_topic("detections");
+    detections_publisher = this->create_publisher<yolo_msgs::msg::Detections>(
+        detections_topic,
         rclcpp::QoS(rclcpp::KeepLast(10)).reliable()
     );
 
     // Maximum inference rate
     // Frames that arrive while inference is busy or rate-limited
     // replace the pending frame so control sees the latest image.
-    this->declare_parameter("fps", 15);
+    this->declare_parameter("fps", 0);
     int fps = this->get_parameter("fps").as_int();
     if (fps > 0) {
         min_inference_interval_ = std::chrono::duration_cast<
@@ -171,14 +172,15 @@ void YoloNode::inference_loop() {
         } // Unlock
 
         // Create output message
-        auto bboxes_msg = std::make_shared<
-            bboxes_kpoints_msgs::msg::BoundingBoxesKeypoints>();
+        auto detections_msg = std::make_shared<yolo_msgs::msg::Detections>();
 
         // Run inference
-        if (yolo->infer(job, bboxes_msg) != 0) {
+        if (yolo->infer(job, detections_msg) != 0) {
             RCLCPP_ERROR(this->get_logger(), "Inference failed");
         } else {
-            bbox_publisher->publish(*bboxes_msg);
+            detections_msg->header.stamp = this->now();
+            detections_msg->header.frame_id = job->header.frame_id;
+            detections_publisher->publish(*detections_msg);
             RCLCPP_DEBUG_THROTTLE(
                 this->get_logger(),
                 *this->get_clock(),
