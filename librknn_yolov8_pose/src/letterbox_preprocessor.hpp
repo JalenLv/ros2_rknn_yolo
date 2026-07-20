@@ -35,7 +35,13 @@ struct Letterbox {
  * RGB buffer while preserving aspect ratio (letterboxing).
  *
  * The preprocessor will attempt to use the RGA hardware accelerator if
- * available, but will fall back to OpenCV if necessary.
+ * available, but will fall back to OpenCV if necessary. Passing `use_rga =
+ * false` will force the use of OpenCV.
+ *
+ * The class first tries to allocate a DMA32 buffer for the model input. If the
+ * allocation fails or the buffer cannot be imported to RGA, it will fall back
+ * to a heap allocation. If the destination buffer still could not be imported,
+ * the RGA path will be disabled and OpenCV will be used for processing.
  */
 class LetterboxPreprocessor {
   public:

@@ -192,6 +192,7 @@ struct LetterboxPreprocessor::Impl {
         destination_height_ = destination_height;
         destination_size_ = width * height * 3U;
 
+        // Skip RGA initialization if requested
         if (!use_rga) {
             if (!allocate_fallback_storage()) {
                 return -1;
@@ -201,6 +202,7 @@ struct LetterboxPreprocessor::Impl {
             return 0;
         }
 
+        // Tries to allocate a DMA32 buffer for RGA
         std::size_t allocation_size = 0U;
         DmaHeapAllocation allocation;
         if (page_round(destination_size_, allocation_size) &&
@@ -219,6 +221,8 @@ struct LetterboxPreprocessor::Impl {
             }
         }
 
+        // Falls back to a heap allocation if the DMA32 allocation failed or
+        // could not import to RGA
         if (destination_handle_ == 0U) {
             if (!allocate_fallback_storage()) {
                 return -1;
@@ -233,11 +237,13 @@ struct LetterboxPreprocessor::Impl {
         }
 
         initialized_ = true;
+        // Disables the RGA path if the destination buffer could not be imported
         if (destination_handle_ == 0U) {
             disable_rga("could not import the model input buffer");
             return 0;
         }
 
+        // Populates the destination buffer metadata for later RGA operations
         destination_buffer_ = wrapbuffer_handle(
             destination_handle_, destination_width_, destination_height_,
             RK_FORMAT_RGB_888, destination_width_, destination_height_);
@@ -249,12 +255,18 @@ struct LetterboxPreprocessor::Impl {
             return -1;
         }
 
+        // Recomputes and caches the letterbox geometry if necessary.
+        // Also fills the padding areas of the destination buffer if the
+        // geometry has changed.
         if (!geometry_valid_ || source.width != cached_source_width_ ||
             source.height != cached_source_height_) {
             Geometry geometry;
             if (!compute_geometry(source.width, source.height, geometry)) {
                 return -1;
             }
+            // Fills the padding areas only once when the geometry changes,
+            // since the padding areas are not affected by the source image
+            // content if the dimensions remain the same.
             fill_padding(geometry);
             geometry_ = geometry;
             cached_source_width_ = source.width;
@@ -262,10 +274,14 @@ struct LetterboxPreprocessor::Impl {
             geometry_valid_ = true;
         }
 
+        // Populates the letterbox metadata for the caller
         letterbox = geometry_.letterbox;
 
-        int source_stride_pixels = 0;
-        if (rga_stride(source, source_stride_pixels)) {
+        // Does resizing and conversion on either RGA or CPU
+        if (can_process_with_rga(source)) {
+            const std::size_t pixel_size = bytes_per_pixel(source.format);
+            const int source_stride_pixels =
+                static_cast<int>(source.step_bytes / pixel_size);
             if (process_rga(source, source_stride_pixels) == 0) {
                 return 0;
             }
@@ -316,6 +332,8 @@ struct LetterboxPreprocessor::Impl {
         destination_fd_ = -1;
         destination_allocation_size_ = 0U;
         owns_dma_destination_ = false;
+        // `std::vector::clear()` does not guarantee that the memory is
+        // released, so we swap with an empty vector to force deallocation.
         std::vector<std::uint8_t>().swap(fallback_storage_);
     }
 
@@ -344,6 +362,7 @@ struct LetterboxPreprocessor::Impl {
         }
     }
 
+    // Validates the source image and its metadata.
     bool validate_source(const SrcView &source) const {
         if (!initialized_ || source.data == nullptr || source.width <= 0 ||
             source.height <= 0) {
@@ -440,6 +459,13 @@ struct LetterboxPreprocessor::Impl {
         return true;
     }
 
+    /**
+     * @brief Fills the padding areas of the destination buffer with a constant
+     * value.
+     *
+     * First tries `imfill()` from RGA, falls back to `memset()` if RGA fails or
+     * is disabled.
+     */
     void fill_padding(const Geometry &geometry) {
         if (!geometry.has_padding) {
             return;
@@ -470,7 +496,7 @@ struct LetterboxPreprocessor::Impl {
         std::memset(destination_, kPaddingValue, destination_size_);
     }
 
-    bool rga_stride(const SrcView &source, int &source_stride_pixels) const {
+    bool can_process_with_rga(const SrcView &source) const {
         if (rga_disabled_ || destination_handle_ == 0U ||
             source.step_bytes % kRequiredRgaStrideAlignment != 0U ||
             (static_cast<std::size_t>(destination_width_) * 3U) %
@@ -484,14 +510,8 @@ struct LetterboxPreprocessor::Impl {
             return false;
         }
 
-        const std::size_t stride_pixels = source.step_bytes / pixel_size;
-        if (stride_pixels >
-            static_cast<std::size_t>(std::numeric_limits<int>::max())) {
-            return false;
-        }
-
-        source_stride_pixels = static_cast<int>(stride_pixels);
-        return true;
+        return source.step_bytes / pixel_size <=
+               static_cast<std::size_t>(std::numeric_limits<int>::max());
     }
 
     int process_rga(const SrcView &source, int source_stride_pixels) {
@@ -577,6 +597,8 @@ struct LetterboxPreprocessor::Impl {
     bool fill_with_memset_{false};
     bool fallback_reported_{false};
 
+    // Indicates whether the preprocessor has already calculated and cached the
+    // letterbox layout for the current source image dimensions.
     bool geometry_valid_{false};
     int cached_source_width_{0};
     int cached_source_height_{0};

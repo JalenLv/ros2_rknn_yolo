@@ -98,6 +98,7 @@ struct YoloV8Pose::Impl {
      */
     int infer(const sensor_msgs::msg::Image::ConstSharedPtr &image,
               yolo_msgs::msg::Detections::SharedPtr detections) {
+        // Checks for null pointers
         if (image == nullptr || detections == nullptr) {
             RCLCPP_ERROR(logger_,
                          "infer received a null image or detections message");
@@ -106,9 +107,11 @@ struct YoloV8Pose::Impl {
 
         SrcView source;
         cv_bridge::CvImageConstPtr converted_image;
+        // Query the pixel format for the image encoding from the message
         const std::optional<PixelFormat> direct_format =
             pixel_format_for_encoding(image->encoding);
 
+        // Populates the source view for the preprocessor
         if (direct_format.has_value()) {
             if (!image_storage_is_valid(*image) ||
                 image->width > static_cast<std::uint32_t>(
@@ -147,30 +150,33 @@ struct YoloV8Pose::Impl {
             source.format = PixelFormat::RGB888;
         }
 
+        // Runs the letterbox preprocessor
         Letterbox letterbox;
         if (preprocessor_.process(source, letterbox) != 0) {
             RCLCPP_ERROR(logger_, "letterbox preprocessing failed");
             return -1;
         }
 
+        // Sets the input tensor for RKNN
         int ret = rknn_inputs_set(rknn_ctx_, io_num_.n_input, inputs_.data());
         if (ret < 0) {
             RCLCPP_ERROR(logger_, "rknn_inputs_set failed: %d", ret);
             return -1;
         }
 
+        // Runs the RKNN model
         ret = rknn_run(rknn_ctx_, nullptr);
         if (ret < 0) {
             RCLCPP_ERROR(logger_, "rknn_run failed: %d", ret);
             return -1;
         }
 
+        // Gets the output tensors from RKNN
         for (std::size_t i = 0; i < outputs_.size(); ++i) {
             outputs_[i] = {};
             outputs_[i].index = static_cast<std::uint32_t>(i);
             outputs_[i].want_float = static_cast<std::uint8_t>(!is_quantized_);
         }
-
         ret = rknn_outputs_get(rknn_ctx_, io_num_.n_output, outputs_.data(),
                                nullptr);
         if (ret < 0) {
@@ -178,6 +184,7 @@ struct YoloV8Pose::Impl {
             return -1;
         }
 
+        // Runs the postprocessor to decode the RKNN outputs into detections
         const std::vector<Detection> *decoded = nullptr;
         try {
             decoded =
@@ -193,6 +200,7 @@ struct YoloV8Pose::Impl {
             return -1;
         }
 
+        // Cleans up the RKNN output buffers and populates the detections message
         rknn_outputs_release(rknn_ctx_, io_num_.n_output, outputs_.data());
         populate_results(*decoded, *image, detections);
         return 0;
@@ -313,6 +321,7 @@ struct YoloV8Pose::Impl {
         inputs_[0].type = RKNN_TENSOR_UINT8;
         inputs_[0].fmt = RKNN_TENSOR_NHWC;
         inputs_[0].size = input_size;
+        // Gets the pointer to input buffer from the preprocessor
         inputs_[0].buf = preprocessor_.destination();
 
         // Prepares the output and postprocessing state
