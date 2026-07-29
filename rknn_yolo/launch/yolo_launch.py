@@ -1,5 +1,5 @@
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, OpaqueFunction
 from launch.substitutions import (
     LaunchConfiguration,
     PathJoinSubstitution,
@@ -12,8 +12,18 @@ from launch_ros.substitutions import FindPackageShare
 LAUNCH_ARGUMENTS = [
     ("fps", "0", "Frame rate for the YOLO node"),
     ("use_rga", "true", "Use RGA hardware for preprocessing; false = plain CPU (OpenCV)"),
-    ("model", "yolov8_pose", "Model configuration name from rknn_yolo/config"),
+    ("model", "yolov8_pose", "Model configuration name from librknn_yolo/config"),
 ]
+
+
+def reject_removed_args(context):
+    for name in ("model_path", "label_path"):
+        if context.launch_configurations.get(name):
+            raise RuntimeError(
+                f"launch argument '{name}' was removed; select a model with "
+                "model:=<config name from librknn_yolo/config> instead")
+    return []
+
 
 def generate_launch_description():
     launch_args = [
@@ -37,6 +47,7 @@ def generate_launch_description():
     return LaunchDescription(
         launch_args +
         [
+            OpaqueFunction(function=reject_removed_args),
             Node(
                 package="rknn_yolo",
                 executable="yolo_node",

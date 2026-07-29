@@ -16,8 +16,9 @@ std::unique_ptr<Yolo> make_yolo(rclcpp::Node &node) {
         node.declare_parameter<std::string>("backend", "");
     if (backend.empty()) {
         throw std::runtime_error(
-            "backend parameter is required; select a backend with the "
-            "launch 'backend' argument");
+            "backend parameter is required; select a model config with the "
+            "launch 'model' argument (configs set 'backend: pose' or "
+            "'backend: detect')");
     }
 
     if (backend == "pose") {

@@ -289,22 +289,14 @@ const std::vector<DetectedBox>& DetectPostprocessor::decode(
 
         results_.emplace_back();
         DetectedBox& detection = results_.back();
-        detection.box.left = static_cast<int>(
-            static_cast<float>(
-                clamp_to_int(x1, 0, model_width_)) /
-            letterbox.scale);
-        detection.box.top = static_cast<int>(
-            static_cast<float>(
-                clamp_to_int(y1, 0, model_height_)) /
-            letterbox.scale);
-        detection.box.right = static_cast<int>(
-            static_cast<float>(
-                clamp_to_int(x1 + width, 0, model_width_)) /
-            letterbox.scale);
-        detection.box.bottom = static_cast<int>(
-            static_cast<float>(
-                clamp_to_int(y1 + height, 0, model_height_)) /
-            letterbox.scale);
+        detection.box.left = clamp_to_int(
+            x1 / letterbox.scale, 0, letterbox.src_width - 1);
+        detection.box.top = clamp_to_int(
+            y1 / letterbox.scale, 0, letterbox.src_height - 1);
+        detection.box.right = clamp_to_int(
+            (x1 + width) / letterbox.scale, 0, letterbox.src_width - 1);
+        detection.box.bottom = clamp_to_int(
+            (y1 + height) / letterbox.scale, 0, letterbox.src_height - 1);
         detection.score =
             candidate_scores_[static_cast<std::size_t>(index)];
         detection.cls_id =

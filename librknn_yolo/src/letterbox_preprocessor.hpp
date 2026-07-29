@@ -32,12 +32,18 @@ struct SrcView {
 
 /**
  * @brief Mapping produced by letterboxing: the source is resized by `scale`
- * and then offset by `x_pad`/`y_pad` inside the model input.
+ * and then offset by `x_pad`/`y_pad` inside the model input. The source
+ * dimensions are retained so mapped coordinates can be clamped to valid
+ * source pixels.
  */
 struct Letterbox {
     int x_pad{0};
     int y_pad{0};
     float scale{1.0F};
+    // Source image size in source pixels; final coordinates are clamped
+    // to [0, src_width-1] x [0, src_height-1].
+    int src_width{0};
+    int src_height{0};
 };
 
 /**

@@ -451,7 +451,8 @@ struct LetterboxPreprocessor::Impl {
             left_offset = destination_rect.x;
         }
 
-        geometry.letterbox = Letterbox{left_offset, top_offset, scale};
+        geometry.letterbox = Letterbox{
+            left_offset, top_offset, scale, source_width, source_height};
         geometry.source_rect = source_rect;
         geometry.destination_rect = destination_rect;
         geometry.has_padding = destination_rect.width != destination_width_ ||

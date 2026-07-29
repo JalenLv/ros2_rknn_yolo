@@ -1,5 +1,7 @@
 #include "rknn_yolo/yolo_node.hpp"
 
+#include <exception>
+
 #include <rclcpp/qos.hpp>
 
 YoloNode::YoloNode(const std::string &node_name) : Node(node_name) {
@@ -240,7 +242,13 @@ bool YoloNode::has_nonzero_stamp(
 int main(int argc, char **argv)
 {
     rclcpp::init(argc, argv);
-    rclcpp::spin(std::make_shared<YoloNode>());
+    int exit_code = 0;
+    try {
+        rclcpp::spin(std::make_shared<YoloNode>());
+    } catch (const std::exception &e) {
+        RCLCPP_FATAL(rclcpp::get_logger("yolo_node"), "%s", e.what());
+        exit_code = 1;
+    }
     rclcpp::shutdown();
-    return 0;
+    return exit_code;
 }

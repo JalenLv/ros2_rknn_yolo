@@ -34,8 +34,9 @@ CommonParams declare_common_params(rclcpp::Node &node) {
 
     if (params.model_path.empty() || params.label_path.empty()) {
         throw std::runtime_error(
-            "model_path and label_path are required; specify a model with the "
-            "launch 'model_path' and 'label_path' arguments");
+            "model_path and label_path are required; select a model config "
+            "with the launch 'model' argument (e.g. model:=yolov8_pose), or "
+            "pass a params file to the node");
     }
 
     params.model_path = resolve_package_path(params.model_path);
