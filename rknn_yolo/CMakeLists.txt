@@ -11,8 +11,7 @@ find_package(builtin_interfaces REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(yolo_msgs REQUIRED)
-find_package(librknn_yolov8_pose REQUIRED)
-find_package(ament_index_cpp REQUIRED)
+find_package(librknn_yolo REQUIRED)
 find_package(cv_bridge REQUIRED)
 find_package(message_filters REQUIRED)
 find_package(OpenCV REQUIRED)
@@ -24,7 +23,6 @@ target_include_directories(yolo_node PUBLIC
 target_compile_features(yolo_node PUBLIC c_std_99 cxx_std_17)
 
 ament_target_dependencies(yolo_node
-  ament_index_cpp
   builtin_interfaces
   rclcpp
   sensor_msgs
@@ -32,7 +30,7 @@ ament_target_dependencies(yolo_node
 )
 
 target_link_libraries(yolo_node
-  librknn_yolov8_pose::rknn_yolov8_pose
+  librknn_yolo::rknn_yolo
 )
 
 add_executable(yolo_visualizer_pose src/yolo_visualizer_pose.cpp)

@@ -1,0 +1,5 @@
+/**:
+  ros__parameters:
+    backend: pose
+    model_path: yolov8_pose.rknn
+    label_path: yolov8_pose_labels_list.txt

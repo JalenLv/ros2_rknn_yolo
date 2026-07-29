@@ -1,21 +1,13 @@
 #include "rknn_yolo/yolo_node.hpp"
 
-#include <ament_index_cpp/get_package_share_directory.hpp>
 #include <rclcpp/qos.hpp>
 
 YoloNode::YoloNode(const std::string &node_name) : Node(node_name) {
     RCLCPP_INFO(this->get_logger(), "Initializing YoloNode...");
 
-    // Construct the YOLO object
-    std::string share_dir = ament_index_cpp::get_package_share_directory("librknn_yolov8_pose");
-    this->declare_parameter("model_path", share_dir + "/model/yolov8_pose.rknn");
-    this->declare_parameter("label_path", share_dir + "/model/yolov8_pose_labels_list.txt");
-    this->declare_parameter("use_rga", true);
-    std::string model_path = this->get_parameter("model_path").as_string();
-    std::string label_path = this->get_parameter("label_path").as_string();
-    const bool use_rga = this->get_parameter("use_rga").as_bool();
-    yolo = std::make_unique<rknn_yolo::YoloV8Pose>(
-        model_path, label_path, this->get_logger(), use_rga);
+    // Construct and initialize the selected YOLO backend.
+    yolo = rknn_yolo::make_yolo(*this);
+    yolo->init(*this);
 
     // Subscribe to the camera image topic
     // Incoming images call `image_callback`
