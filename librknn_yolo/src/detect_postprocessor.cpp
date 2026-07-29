@@ -62,7 +62,7 @@ int decode_branch(
             for (int class_id = 0; class_id < num_classes; ++class_id) {
                 const T score =
                     score_tensor[class_id * grid_size + cell];
-                if (score > score_threshold && score > max_score) {
+                if (score > max_score) {
                     max_score = score;
                     max_class_id = class_id;
                 }

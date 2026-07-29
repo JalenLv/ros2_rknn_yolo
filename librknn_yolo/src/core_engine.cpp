@@ -198,8 +198,7 @@ void CoreEngine::finalize_io(bool use_rga, bool is_quantized) {
         static_cast<std::uint64_t>(model_width_) *
         static_cast<std::uint64_t>(model_height_) *
         static_cast<std::uint64_t>(model_channels_);
-    if (input_size > std::numeric_limits<std::size_t>::max() ||
-        input_size > std::numeric_limits<std::uint32_t>::max()) {
+    if (input_size > std::numeric_limits<std::uint32_t>::max()) {
         fail("model input tensor is too large");
     }
 

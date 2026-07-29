@@ -16,7 +16,7 @@
 #include <yolo_msgs/msg/detections.hpp>
 
 /**
- * @brief ROS 2 node wrapper for RKNN YOLO pose inference.
+ * @brief ROS 2 node wrapper for RKNN YOLO inference.
  *
  * This node subscribes to images, runs latest-frame inference, and publishes
  * YOLO detections.
