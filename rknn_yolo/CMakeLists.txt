@@ -52,6 +52,10 @@ install(TARGETS yolo_node yolo_visualizer_pose
   DESTINATION lib/${PROJECT_NAME}
 )
 
+install(PROGRAMS scripts/tracking_node
+  DESTINATION lib/${PROJECT_NAME}
+)
+
 install(DIRECTORY include/
   DESTINATION include
 )
