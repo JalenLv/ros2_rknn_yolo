@@ -1,0 +1,44 @@
+Ultralytics tracker vendoring notice
+====================================
+
+The Python files in this directory and its utils/ subdirectory are derived
+from the Ultralytics repository at revision
+70b482424ea123e0848195186d4a29cbff46d750:
+
+    https://github.com/ultralytics/ultralytics
+
+Those files are licensed under the GNU Affero General Public License,
+version 3. The complete license text is provided in LICENSE beside this
+notice. The MIT license at the root of ros2_rknn_yolo does not replace or
+weaken the AGPL-3.0 terms that apply to this vendored subtree. Distributing
+or providing network access to a combined or modified work may create
+source-disclosure and other obligations; review the AGPL-3.0 before doing so.
+
+Phase 1 vendoring manifest
+--------------------------
+
+Copied without edits:
+
+* basetrack.py
+* utils/__init__.py
+* utils/kalman_filter.py
+* utils/stracks.py
+
+Local edits, marked with ``# LOCAL-EDIT`` where they occur:
+
+* byte_tracker.py redirects the Ultralytics LOGGER and xywh2ltwh imports to
+  compat.py.
+* utils/matching.py removes the lap import and import-time package installer,
+  removes the unused use_lap argument and solve-then-filter branch, redirects
+  axis-aligned IoU and assignment to compat.py, and removes the torch-only OBB
+  probability-IoU branch.
+* trackers/__init__.py is reduced to the Phase 1 BYTETracker export so it does
+  not import non-vendored or torch-dependent modules.
+
+New compatibility file:
+
+* compat.py contains NumPy-only copies of xywh2ltwh, xyxy2ltwh, and bbox_ioa
+  from the same Ultralytics revision, plus a local logging object and a
+  SciPy-backed replacement for lap.lapjv(extend_cost=True, cost_limit=...).
+  The replacement uses lap's extended-matrix construction. Equal-objective
+  assignment ties may resolve differently.
