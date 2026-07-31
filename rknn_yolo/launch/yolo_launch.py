@@ -57,7 +57,6 @@ def generate_launch_description():
                         "fps": launch_configs["fps"],
                         "use_rga": launch_configs["use_rga"],
                     },
-
                 ],
             ),
         ]
