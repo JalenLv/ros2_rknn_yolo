@@ -12,43 +12,57 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef LIBRKNN_YOLOV8_POSE__DETECTION_POSTPROCESSOR_HPP_
-#define LIBRKNN_YOLOV8_POSE__DETECTION_POSTPROCESSOR_HPP_
+#ifndef LIBRKNN_YOLO__POSE_POSTPROCESSOR_HPP_
+#define LIBRKNN_YOLO__POSE_POSTPROCESSOR_HPP_
 
 #include <vector>
 
 #include "rknn_api.h"
 
 #include "letterbox_preprocessor.hpp"
+#include "postprocess_common.hpp"
 
 namespace rknn_yolo {
 
-struct Rect {
-    int left;
-    int top;
-    int right;
-    int bottom;
-};
-
+/**
+ * @brief One decoded pose detection in original-image pixel coordinates.
+ */
 struct Detection {
     Rect box;
+    // 17 COCO keypoints as (x, y, confidence).
     float keypoints[17][3];
     float score;
     int cls_id;
 };
 
-class DetectionPostprocessor {
+/**
+ * @brief Decodes raw pose-model outputs (three merged DFL box/score heads
+ * plus the keypoint tensor) into detections, applying score thresholding and
+ * per-class NMS.
+ */
+class PosePostprocessor {
 public:
-    DetectionPostprocessor(
+    /**
+     * @brief Caches the model geometry and quantization info from the output
+     * attributes and preallocates the decode buffers.
+     */
+    PosePostprocessor(
         int model_width,
         int model_height,
         const std::vector<rknn_tensor_attr>& output_attrs);
 
+    /**
+     * @brief Decodes one frame's outputs into detections mapped back to
+     * original-image coordinates through the letterbox.
+     * @return the decoded detections; the reference stays valid until the
+     * next call.
+     */
     const std::vector<Detection>& decode(
         const std::vector<rknn_output>& outputs,
         const std::vector<rknn_tensor_attr>& output_attrs,
         const Letterbox& letterbox);
 
+    /** @return the class count implied by the model's output shape. */
     int num_classes() const noexcept;
 
 private:
@@ -67,4 +81,4 @@ private:
 
 }  // namespace rknn_yolo
 
-#endif  // LIBRKNN_YOLOV8_POSE__DETECTION_POSTPROCESSOR_HPP_
+#endif  // LIBRKNN_YOLO__POSE_POSTPROCESSOR_HPP_

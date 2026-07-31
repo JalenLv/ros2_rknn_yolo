@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "detection_postprocessor.hpp"
+#include "pose_postprocessor.hpp"
 
 #include <Float16.h>
 
@@ -36,55 +36,6 @@ constexpr int kKeypointValues = 3;
 constexpr std::size_t kMaxDetections = 128;
 constexpr float kBoxThreshold = 0.5F;
 constexpr float kNmsThreshold = 0.4F;
-
-float sigmoid(float value) {
-    return 1.0F / (1.0F + std::exp(-value));
-}
-
-float unsigmoid(float value) {
-    return -1.0F * std::log((1.0F / value) - 1.0F);
-}
-
-int32_t clip_to_int(float value, float minimum, float maximum) {
-    const float clipped = value <= minimum ? minimum : (value >= maximum ? maximum : value);
-    return static_cast<int32_t>(clipped);
-}
-
-int8_t quantize_affine(float value, int32_t zero_point, float scale) {
-    const float quantized = (value / scale) + static_cast<float>(zero_point);
-    return static_cast<int8_t>(clip_to_int(quantized, -128.0F, 127.0F));
-}
-
-struct IdentityDequantizer {
-    float operator()(float value) const noexcept {
-        return value;
-    }
-};
-
-struct AffineDequantizer {
-    int32_t zero_point;
-    float scale;
-
-    float operator()(int8_t value) const noexcept {
-        return (static_cast<float>(value) - static_cast<float>(zero_point)) * scale;
-    }
-};
-
-void softmax(float* values, int size) {
-    float maximum = values[0];
-    for (int i = 1; i < size; ++i) {
-        maximum = std::max(maximum, values[i]);
-    }
-
-    float sum = 0.0F;
-    for (int i = 0; i < size; ++i) {
-        sum += std::exp(values[i] - maximum);
-    }
-
-    for (int i = 0; i < size; ++i) {
-        values[i] = std::exp(values[i] - maximum) / sum;
-    }
-}
 
 template<typename T, typename Dequantizer>
 int decode_branch(
@@ -159,103 +110,6 @@ int decode_branch(
     return valid_count;
 }
 
-float calculate_overlap(
-    float xmin0,
-    float ymin0,
-    float xmax0,
-    float ymax0,
-    float xmin1,
-    float ymin1,
-    float xmax1,
-    float ymax1) {
-    const float width =
-        std::fmax(0.0F, std::fmin(xmax0, xmax1) - std::fmax(xmin0, xmin1) + 1.0F);
-    const float height =
-        std::fmax(0.0F, std::fmin(ymax0, ymax1) - std::fmax(ymin0, ymin1) + 1.0F);
-    const float intersection = width * height;
-    const float union_area =
-        (xmax0 - xmin0 + 1.0F) * (ymax0 - ymin0 + 1.0F) +
-        (xmax1 - xmin1 + 1.0F) * (ymax1 - ymin1 + 1.0F) - intersection;
-    return union_area <= 0.0F ? 0.0F : intersection / union_area;
-}
-
-void suppress_class(
-    const std::vector<float>& boxes,
-    const std::vector<int>& class_ids,
-    std::vector<int>& order,
-    int class_id) {
-    for (std::size_t i = 0; i < order.size(); ++i) {
-        const int current = order[i];
-        if (current == -1 || class_ids[static_cast<std::size_t>(current)] != class_id) {
-            continue;
-        }
-
-        const std::size_t current_box = static_cast<std::size_t>(current) * 5U;
-        const float xmin0 = boxes[current_box];
-        const float ymin0 = boxes[current_box + 1U];
-        const float xmax0 = xmin0 + boxes[current_box + 2U];
-        const float ymax0 = ymin0 + boxes[current_box + 3U];
-
-        for (std::size_t j = i + 1U; j < order.size(); ++j) {
-            const int candidate = order[j];
-            if (candidate == -1 || class_ids[static_cast<std::size_t>(candidate)] != class_id) {
-                continue;
-            }
-
-            const std::size_t candidate_box = static_cast<std::size_t>(candidate) * 5U;
-            const float xmin1 = boxes[candidate_box];
-            const float ymin1 = boxes[candidate_box + 1U];
-            const float xmax1 = xmin1 + boxes[candidate_box + 2U];
-            const float ymax1 = ymin1 + boxes[candidate_box + 3U];
-
-            if (calculate_overlap(xmin0, ymin0, xmax0, ymax0, xmin1, ymin1, xmax1, ymax1) >
-                kNmsThreshold) {
-                order[j] = -1;
-            }
-        }
-    }
-}
-
-void stable_sort_indices(
-    const std::vector<float>& scores,
-    std::vector<int>& indices,
-    std::vector<int>& scratch) {
-    bool source_is_indices = true;
-
-    for (std::size_t run_size = 1U; run_size < indices.size(); run_size *= 2U) {
-        const std::vector<int>& source = source_is_indices ? indices : scratch;
-        std::vector<int>& destination = source_is_indices ? scratch : indices;
-
-        for (std::size_t begin = 0U; begin < indices.size(); begin += 2U * run_size) {
-            const std::size_t middle = std::min(begin + run_size, indices.size());
-            const std::size_t end = std::min(begin + 2U * run_size, indices.size());
-            std::size_t left = begin;
-            std::size_t right = middle;
-
-            for (std::size_t out = begin; out < end; ++out) {
-                const bool take_left =
-                    right == end ||
-                    (left < middle &&
-                     !(scores[static_cast<std::size_t>(source[right])] >
-                       scores[static_cast<std::size_t>(source[left])]));
-                destination[out] = take_left ? source[left++] : source[right++];
-            }
-        }
-
-        source_is_indices = !source_is_indices;
-    }
-
-    if (!source_is_indices) {
-        std::copy_n(scratch.begin(), indices.size(), indices.begin());
-    }
-}
-
-int clamp_to_int(float value, int minimum, int maximum) {
-    return value > static_cast<float>(minimum)
-        ? (value < static_cast<float>(maximum) ? static_cast<int>(value) : maximum)
-        : minimum;
-}
-
 template<typename T>
 void copy_keypoints(
     const T* keypoint_output,
@@ -293,7 +147,7 @@ std::size_t candidate_capacity(
 
 }  // namespace
 
-DetectionPostprocessor::DetectionPostprocessor(
+PosePostprocessor::PosePostprocessor(
     int model_width,
     int model_height,
     const std::vector<rknn_tensor_attr>& output_attrs)
@@ -325,7 +179,7 @@ DetectionPostprocessor::DetectionPostprocessor(
     results_.reserve(kMaxDetections);
 }
 
-const std::vector<Detection>& DetectionPostprocessor::decode(
+const std::vector<Detection>& PosePostprocessor::decode(
     const std::vector<rknn_output>& outputs,
     const std::vector<rknn_tensor_attr>& output_attrs,
     const Letterbox& letterbox) {
@@ -390,7 +244,12 @@ const std::vector<Detection>& DetectionPostprocessor::decode(
     stable_sort_indices(candidate_scores_, sort_indices_, merge_indices_);
 
     for (int class_id = 0; class_id < num_classes_; ++class_id) {
-        suppress_class(candidate_boxes_, candidate_class_ids_, sort_indices_, class_id);
+        suppress_class(
+            candidate_boxes_,
+            candidate_class_ids_,
+            sort_indices_,
+            class_id,
+            kNmsThreshold);
     }
 
     for (const int index : sort_indices_) {
@@ -426,18 +285,14 @@ const std::vector<Detection>& DetectionPostprocessor::decode(
                 detection);
         }
 
-        detection.box.left =
-            static_cast<int>(
-                static_cast<float>(clamp_to_int(x1, 0, model_width_)) / letterbox.scale);
-        detection.box.top =
-            static_cast<int>(
-                static_cast<float>(clamp_to_int(y1, 0, model_height_)) / letterbox.scale);
-        detection.box.right =
-            static_cast<int>(
-                static_cast<float>(clamp_to_int(x1 + width, 0, model_width_)) / letterbox.scale);
-        detection.box.bottom =
-            static_cast<int>(
-                static_cast<float>(clamp_to_int(y1 + height, 0, model_height_)) / letterbox.scale);
+        detection.box.left = clamp_to_int(
+            x1 / letterbox.scale, 0, letterbox.src_width - 1);
+        detection.box.top = clamp_to_int(
+            y1 / letterbox.scale, 0, letterbox.src_height - 1);
+        detection.box.right = clamp_to_int(
+            (x1 + width) / letterbox.scale, 0, letterbox.src_width - 1);
+        detection.box.bottom = clamp_to_int(
+            (y1 + height) / letterbox.scale, 0, letterbox.src_height - 1);
         detection.score = candidate_scores_[static_cast<std::size_t>(index)];
         detection.cls_id = candidate_class_ids_[static_cast<std::size_t>(index)];
     }
@@ -445,7 +300,7 @@ const std::vector<Detection>& DetectionPostprocessor::decode(
     return results_;
 }
 
-int DetectionPostprocessor::num_classes() const noexcept {
+int PosePostprocessor::num_classes() const noexcept {
     return num_classes_;
 }
 

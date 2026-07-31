@@ -1,11 +1,12 @@
 cmake_minimum_required(VERSION 3.15)
-project(librknn_yolov8_pose)
+project(librknn_yolo)
 
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra)
 endif()
 
 find_package(ament_cmake REQUIRED)
+find_package(ament_index_cpp REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(yolo_msgs REQUIRED)
@@ -21,13 +22,18 @@ set(LIBRGA
 set(LIBRGA_INCLUDES
   "${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/librga/include")
 
-add_library(rknn_yolov8_pose SHARED
-  src/rknn_yolov8_pose.cpp
+add_library(rknn_yolo SHARED
+  src/backend_factory.cpp
+  src/backend_params.cpp
+  src/core_engine.cpp
+  src/detect_backend.cpp
+  src/detect_postprocessor.cpp
   src/letterbox_preprocessor.cpp
-  src/detection_postprocessor.cpp
+  src/pose_backend.cpp
+  src/pose_postprocessor.cpp
 )
-target_compile_features(rknn_yolov8_pose PUBLIC cxx_std_17)
-target_include_directories(rknn_yolov8_pose
+target_compile_features(rknn_yolo PUBLIC cxx_std_17)
+target_include_directories(rknn_yolo
   PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>
@@ -36,21 +42,22 @@ target_include_directories(rknn_yolov8_pose
     ${LIBRGA_INCLUDES}
     ${OpenCV_INCLUDE_DIRS}
 )
-target_link_libraries(rknn_yolov8_pose
+target_link_libraries(rknn_yolo
   PUBLIC
     rclcpp::rclcpp
     ${sensor_msgs_TARGETS}
     ${yolo_msgs_TARGETS}
   PRIVATE
     cv_bridge::cv_bridge
+    ament_index_cpp::ament_index_cpp
     opencv_core
     opencv_imgproc
     ${LIBRKNNRT}
     ${LIBRGA}
 )
 
-install(TARGETS rknn_yolov8_pose
-  EXPORT export_rknn_yolov8_pose
+install(TARGETS rknn_yolo
+  EXPORT export_rknn_yolo
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin
@@ -67,10 +74,10 @@ install(FILES
   DESTINATION lib
 )
 
-install(DIRECTORY model/
-  DESTINATION share/${PROJECT_NAME}/model
+install(DIRECTORY model config
+  DESTINATION share/${PROJECT_NAME}
 )
 
-ament_export_targets(export_rknn_yolov8_pose HAS_LIBRARY_TARGET)
+ament_export_targets(export_rknn_yolo HAS_LIBRARY_TARGET)
 ament_export_dependencies(rclcpp sensor_msgs yolo_msgs)
 ament_package()

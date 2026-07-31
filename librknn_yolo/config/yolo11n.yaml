@@ -1,0 +1,5 @@
+/**:
+  ros__parameters:
+    backend: detect
+    model_path: yolo11n.rknn
+    label_path: yolo11n_labels_list.txt
